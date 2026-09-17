@@ -1,5 +1,5 @@
 import { createHash, createHmac, type Hmac, randomBytes } from 'node:crypto'
-import { type Credential, Plugin } from '@opencode-ai/plugin'
+import { type Credential, Plugin } from '@opencode/plugin'
 import { authorize, exchange, refreshToken } from './auth.ts'
 import { BodyLimitError, contentLength, readBoundedText } from './bounded.ts'
 import { resolveClaudeCodeVersion } from './config.ts'
