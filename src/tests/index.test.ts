@@ -918,7 +918,8 @@ describe('session http.request hook', () => {
   test('logs and ignores a malformed Claude Code version', async () => {
     const originalVersion = process.env[ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR]
     const consoleError = spyOn(console, 'error').mockImplementation(() => {})
-    process.env[ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR] = 'latest'
+    const malformedValue = 'credential-like-private-value'
+    process.env[ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR] = malformedValue
 
     try {
       const { ctx, sessionHooks } = anthropicOAuthContext()
@@ -927,6 +928,9 @@ describe('session http.request hook', () => {
       expect(consoleError).toHaveBeenCalledTimes(1)
       expect(String(consoleError.mock.calls[0]?.[0])).toContain(
         ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR,
+      )
+      expect(String(consoleError.mock.calls[0]?.[0])).not.toContain(
+        malformedValue,
       )
 
       const event: any = {

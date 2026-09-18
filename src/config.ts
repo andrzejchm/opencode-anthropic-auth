@@ -14,16 +14,17 @@ export const ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR =
 /**
  * Claude Code releases are `major.minor.patch` with numeric components.
  *
- * Leading zeros are rejected: `02.1.258` is not a release Anthropic publishes,
+ * Leading zeros are rejected: `02.1.275` is not a release Anthropic publishes,
  * so accepting it would report a version string no server-side gate expects.
  */
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const MAX_VERSION_LENGTH = 64
 
 /**
  * Is `candidate` an older Claude Code release than `baseline`?
  *
  * Both arguments must already match `VERSION_PATTERN`. Components are compared
- * numerically rather than lexically — `2.1.99` sorts after `2.1.258` as a
+ * numerically rather than lexically — `2.1.99` sorts after `2.1.275` as a
  * string but is the older release — and as `BigInt`, so an unbounded component
  * cannot silently lose precision the way `Number` would.
  */
@@ -76,13 +77,13 @@ export function resolveClaudeCodeVersion(
     return { type: 'success', version: CLAUDE_CODE_VERSION }
   }
 
-  const trimmed = raw.trim()
+  const trimmed = raw.length <= MAX_VERSION_LENGTH ? raw.trim() : ''
   if (!VERSION_PATTERN.test(trimmed)) {
     return {
       type: 'invalid',
       error:
-        `${ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR} is set to ${JSON.stringify(raw)}, which is not a ` +
-        `Claude Code version. Expected major.minor.patch (for example, ${CLAUDE_CODE_VERSION}). ` +
+        `${ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR} is not a valid Claude Code version. ` +
+        `Expected major.minor.patch (for example, ${CLAUDE_CODE_VERSION}). ` +
         `Reporting the bundled version ${CLAUDE_CODE_VERSION} instead; correct or unset ` +
         `${ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR} and restart OpenCode to use the override.`,
     }

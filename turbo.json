@@ -10,11 +10,15 @@
     "check:all": {
       "dependsOn": ["types", "build", "test", "format:check", "lint"]
     },
-    "types": {},
+    "types": {
+      "dependsOn": ["build"]
+    },
     "build": {
       "outputs": ["dist/**"]
     },
-    "test": {},
+    "test": {
+      "dependsOn": ["build"]
+    },
     "format:check": {},
     "lint": {}
   },
