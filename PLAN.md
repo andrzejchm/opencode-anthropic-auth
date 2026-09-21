@@ -110,13 +110,13 @@ returns its identity (verified live):
 
 ```jsonc
 {
-  "account":      { "email": "andrzej@stikky.co", "full_name": "Andrzej" },
-  "organization": { "name": "Latori", "rate_limit_tier": "default_claude_max_5x",
+  "account":      { "email": "you@work.example", "full_name": "Ada" },
+  "organization": { "name": "Acme", "rate_limit_tier": "default_claude_max_5x",
                     "subscription_status": "active" }
 }
 ```
 
-So every account self-labels as `andrzej@stikky.co (Latori · max_5x)` at login
+So every account self-labels as `you@work.example (Acme · max_5x)` at login
 time. No prompt to fill in, and no chance of mislabelling which credential is
 which. A manual override is still available via the CLI.
 
@@ -136,12 +136,12 @@ every switch and every usage update, derived from the store so it cannot drift:
 ```jsonc
 {
   "updatedAt": "2026-09-21T19:15:35Z",
-  "active": "andrzej@stikky.co",
+  "active": "you@work.example",
   "accounts": [
-    { "order": 1, "label": "andrzej@stikky.co", "org": "Latori", "tier": "max_5x",
+    { "order": 1, "label": "you@work.example", "org": "Acme", "tier": "max_5x",
       "state": "parked",  "u5h": 0.63, "resets5h": "2026-09-22T00:10:00Z",
       "u7d": 0.28, "lastUsed": "2026-09-21T19:14:02Z" },
-    { "order": 2, "label": "andrzej@personal.com", "org": null, "tier": "max_20x",
+    { "order": 2, "label": "you@personal.example", "org": null, "tier": "max_20x",
       "state": "active",  "u5h": 0.11, "resets5h": "2026-09-22T02:40:00Z",
       "u7d": 0.04, "lastUsed": "2026-09-21T19:15:35Z" },
     { "order": 3, "label": "spare@example.com", "org": null, "tier": "max_5x",
@@ -173,8 +173,8 @@ OpenCode is running.
 ```
 $ oc-anthropic status
   #  ACCOUNT                        ORG      TIER     5H     RESETS IN   7D    STATE
-  1  andrzej@stikky.co              Latori   max_5x   63%    4h 54m      28%   parked
-> 2  andrzej@personal.com           —        max_20x  11%    7h 24m       4%   ACTIVE
+  1  you@work.example              Acme   max_5x   63%    4h 54m      28%   parked
+> 2  you@personal.example           —        max_20x  11%    7h 24m       4%   ACTIVE
   3  spare@example.com              —        max_5x    0%    —            0%   idle
 ```
 
@@ -197,7 +197,7 @@ store, and config wins on startup if both are set:
 ```jsonc
 "plugin": [
   ["@andrzejchm/opencode-anthropic-auth", {
-    "accountOrder": ["andrzej@stikky.co", "andrzej@personal.com", "spare@example.com"],
+    "accountOrder": ["you@work.example", "you@personal.example", "spare@example.com"],
     "switchThreshold": 0.60,
     "weeklyThreshold": 0.98
   }]
