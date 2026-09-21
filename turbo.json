@@ -1,6 +1,9 @@
 {
   "$schema": "https://turborepo.com/schema.json",
-  "globalDependencies": ["bun.lock", "mise.toml"],
+  "globalDependencies": [
+    "bun.lock",
+    "mise.toml"
+  ],
   "globalPassThroughEnv": [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_CLAUDE_CODE_VERSION",
@@ -8,15 +11,30 @@
   ],
   "tasks": {
     "check:all": {
-      "dependsOn": ["types", "build", "test", "format:check", "lint"]
+      "dependsOn": [
+        "types",
+        "build",
+        "test",
+        "format:check",
+        "lint"
+      ]
     },
     "types": {},
     "build": {
-      "outputs": ["dist/**"]
+      "outputs": [
+        "dist/**"
+      ]
     },
     "test": {},
     "format:check": {},
     "lint": {}
   },
-  "ui": "tui"
+  "ui": "tui",
+  "globalEnv": [
+    "ANTHROPIC_ACCOUNTS_FILE",
+    "ANTHROPIC_STATUS_FILE",
+    "ANTHROPIC_SWITCH_THRESHOLD",
+    "ANTHROPIC_WEEKLY_THRESHOLD",
+    "XDG_DATA_HOME"
+  ]
 }
