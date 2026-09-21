@@ -115,6 +115,7 @@ export function migrateFromOpencodeAuth(): Account | null {
       access: entry.access,
       expires: entry.expires ?? 0,
       usage: null,
+      threshold: null,
       parkedUntil: 0,
       lastUsed: null,
       error: null,

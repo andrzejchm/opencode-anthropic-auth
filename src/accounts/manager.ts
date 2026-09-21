@@ -33,12 +33,39 @@ export function resolveConfig(options?: Record<string, unknown>): Config {
       options?.weeklyThreshold ?? process.env.ANTHROPIC_WEEKLY_THRESHOLD,
       DEFAULT_CONFIG.weeklyThreshold,
     ),
+    accountThresholds: parseThresholds(options?.accountThresholds),
     accountOrder: Array.isArray(options?.accountOrder)
       ? (options.accountOrder as unknown[]).filter(
           (e): e is string => typeof e === 'string',
         )
       : DEFAULT_CONFIG.accountOrder,
   }
+}
+
+/**
+ * Read a `{ label: threshold }` map from config.
+ *
+ * Accepts percentages as well as fractions, because `80` is the obvious thing
+ * to write in a config file and silently treating it as out-of-range would make
+ * the account never hand over.
+ */
+function parseThresholds(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const parsed = normalizeThreshold(value)
+    if (parsed !== null) out[key] = parsed
+  }
+  return out
+}
+
+/** `0.8` and `80` both mean 80%. Returns null for anything unusable. */
+export function normalizeThreshold(value: unknown): number | null {
+  const parsed = typeof value === 'string' ? Number(value) : value
+  if (typeof parsed !== 'number' || !Number.isFinite(parsed)) return null
+  const fraction = parsed > 1 ? parsed / 100 : parsed
+  if (fraction <= 0 || fraction > 1) return null
+  return fraction
 }
 
 export type Manager = {

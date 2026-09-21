@@ -49,6 +49,7 @@ export async function addAccount(
     access: credentials.access,
     expires: credentials.expires,
     usage: null,
+    threshold: null,
     parkedUntil: 0,
     lastUsed: null,
     error: null,
