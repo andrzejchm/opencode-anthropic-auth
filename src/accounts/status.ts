@@ -1,6 +1,12 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { effectiveU5h, effectiveU7d, ordered, stateOf } from './selector.ts'
+import {
+  effectiveU5h,
+  effectiveU7d,
+  ordered,
+  stateOf,
+  thresholdFor,
+} from './selector.ts'
 import { statusPath } from './store.ts'
 import type { Config, Store } from './types.ts'
 
@@ -11,6 +17,8 @@ export type StatusRow = {
   org: string | null
   tier: string | null
   state: string
+  /** Effective 5h switch threshold for this account (0..1). */
+  threshold: number
   u5h: number
   resets5h: string | null
   u7d: number
@@ -40,6 +48,7 @@ export function buildStatus(
     org: account.org,
     tier: account.tier,
     state: stateOf(account, store, config, now),
+    threshold: thresholdFor(account, config),
     u5h: round(effectiveU5h(account, now)),
     resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
     u7d: round(effectiveU7d(account, now)),

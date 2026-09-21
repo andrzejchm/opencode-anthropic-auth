@@ -1,8 +1,18 @@
 #!/usr/bin/env bun
 import { createInterface } from 'node:readline/promises'
 import { addAccount } from '../src/accounts/login.ts'
-import { labelAccount, resolveConfig } from '../src/accounts/manager.ts'
-import { effectiveU5h, effectiveU7d, ordered, stateOf } from '../src/accounts/selector.ts'
+import {
+  labelAccount,
+  normalizeThreshold,
+  resolveConfig,
+} from '../src/accounts/manager.ts'
+import {
+  effectiveU5h,
+  effectiveU7d,
+  ordered,
+  stateOf,
+  thresholdFor,
+} from '../src/accounts/selector.ts'
 import { writeStatus } from '../src/accounts/status.ts'
 import {
   findAccount,
@@ -45,7 +55,7 @@ function status(): void {
 
   const now = Date.now()
   console.log(
-    `   ${pad('#', 3)}${pad('ACCOUNT', 32)}${pad('ORG', 14)}${pad('TIER', 9)}${pad('5H', 6)}${pad('RESETS IN', 11)}${pad('7D', 6)}STATE`,
+    `   ${pad('#', 3)}${pad('ACCOUNT', 32)}${pad('ORG', 14)}${pad('TIER', 9)}${pad('5H', 6)}${pad('SWITCH', 8)}${pad('RESETS IN', 11)}${pad('7D', 6)}STATE`,
   )
   for (const [index, account] of ordered(store, config).entries()) {
     const state = stateOf(account, store, config, now)
@@ -58,6 +68,7 @@ function status(): void {
         pad(account.org ?? '—', 14) +
         pad(account.tier ?? '—', 9) +
         pad(`${Math.round(effectiveU5h(account, now) * 100)}%`, 6) +
+        pad(`${Math.round(thresholdFor(account, config) * 100)}%`, 8) +
         pad(relative(reset), 11) +
         pad(`${Math.round(effectiveU7d(account, now) * 100)}%`, 6) +
         (state === 'active' ? 'ACTIVE' : state),
@@ -65,7 +76,7 @@ function status(): void {
     if (account.error) console.log(`      ! ${account.error.slice(0, 100)}`)
   }
   console.log(
-    `\nswitch at ${Math.round(config.switchThreshold * 100)}% · store ${storePath()} · status ${statusPath()}`,
+    `\ndefault switch ${Math.round(config.switchThreshold * 100)}% · store ${storePath()} · status ${statusPath()}`,
   )
 }
 
@@ -158,6 +169,30 @@ function use(needle: string): void {
   status()
 }
 
+/**
+ * Set or clear an account's own switch threshold.
+ *
+ * `default` removes the override so the account follows the global setting
+ * again; anything else accepts either `80` or `0.8`.
+ */
+function setThreshold(needle: string, raw: string): void {
+  const store = loadStore()
+  const account = findAccount(store, needle)
+  if (!account) fail(`unknown account: ${needle}`)
+
+  if (raw === 'default' || raw === 'none') {
+    account.threshold = null
+  } else {
+    const value = normalizeThreshold(raw)
+    if (value === null) fail(`threshold must be between 0 and 100 (got ${raw})`)
+    account.threshold = value
+  }
+
+  saveStore(store)
+  writeStatus(store, config)
+  status()
+}
+
 /** Undo every park so the rotation starts clean from account #1. */
 function unpark(): void {
   const store = loadStore()
@@ -190,6 +225,11 @@ switch (command) {
     if (args.length < 2) fail('usage: oc-anthropic label <account> <new-label>')
     relabel(args[0] as string, args[1] as string)
     break
+  case 'threshold':
+    if (args.length < 2)
+      fail('usage: oc-anthropic threshold <account> <percent|default>')
+    setThreshold(args[0] as string, args[1] as string)
+    break
   case 'use':
     if (!args[0]) fail('usage: oc-anthropic use <account>')
     use(args[0])
@@ -211,6 +251,7 @@ switch (command) {
         '  refresh             poll live usage for every account',
         '  order <label>...    set rotation order',
         '  label <acct> <new>  rename an account',
+        '  threshold <acct> <n> per-account switch point, e.g. 80 (or `default`)',
         '  use <acct>          force-switch to an account now',
         '  unpark              clear all parks',
         '  remove <acct>       drop an account',

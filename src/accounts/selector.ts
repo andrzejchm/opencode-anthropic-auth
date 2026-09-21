@@ -24,6 +24,26 @@ export function effectiveU7d(account: Account, now: number): number {
   return usage.u7d
 }
 
+/**
+ * The 5h utilization at which this specific account should hand over.
+ *
+ * Precedence is most-specific-wins: a value stored on the account (set via
+ * `oc-anthropic threshold`) beats a `accountThresholds` entry in config, which
+ * beats the global default. Letting each account differ matters because plans
+ * differ — a 20x account can safely absorb far more before you step off it
+ * than a 5x one.
+ */
+export function thresholdFor(account: Account, config: Config): number {
+  if (account.threshold !== null && account.threshold !== undefined) {
+    return account.threshold
+  }
+  return (
+    config.accountThresholds[account.label] ??
+    config.accountThresholds[account.id] ??
+    config.switchThreshold
+  )
+}
+
 /** Weekly limit exhausted — the account cannot serve anything until it resets. */
 export function isBlocked(
   account: Account,
@@ -41,7 +61,7 @@ export function isEligible(
 ): boolean {
   if (now < account.parkedUntil) return false
   if (isBlocked(account, config, now)) return false
-  return effectiveU5h(account, now) < config.switchThreshold
+  return effectiveU5h(account, now) < thresholdFor(account, config)
 }
 
 /** Apply the configured rotation order; unlisted accounts keep store order. */
@@ -114,7 +134,8 @@ export function stateOf(
   if (store.active === account.id) return 'active'
   if (isBlocked(account, config, now)) return 'blocked'
   if (now < account.parkedUntil) return 'parked'
-  if (effectiveU5h(account, now) >= config.switchThreshold) return 'parked'
+  if (effectiveU5h(account, now) >= thresholdFor(account, config))
+    return 'parked'
   if (account.error) return 'error'
   return 'idle'
 }

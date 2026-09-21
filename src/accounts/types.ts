@@ -33,6 +33,11 @@ export type Account = {
   /** Epoch ms. */
   expires: number
   usage: Usage | null
+  /**
+   * Per-account 5h switch threshold (0..1). `null` falls back to the global
+   * `switchThreshold`, so accounts only carry a value when deliberately tuned.
+   */
+  threshold: number | null
   /** Epoch ms; account is skipped until then. Set on 429 / manual park. */
   parkedUntil: number
   /** Epoch ms of last successful request. */
@@ -49,8 +54,13 @@ export type Store = {
 }
 
 export type Config = {
-  /** Move on once the active account's 5h utilization reaches this (0..1). */
+  /** Default 5h utilization (0..1) at which to move on, for accounts with no override. */
   switchThreshold: number
+  /**
+   * Per-account thresholds keyed by label or id, e.g. `{ "a@b.com": 0.8 }`.
+   * Used when the account itself carries no stored override.
+   */
+  accountThresholds: Record<string, number>
   /** Treat an account as unusable at or above this 7d utilization (0..1). */
   weeklyThreshold: number
   /** Account labels or ids, in rotation order. Unlisted accounts keep their store order. */
@@ -59,6 +69,7 @@ export type Config = {
 
 export const DEFAULT_CONFIG: Config = {
   switchThreshold: 0.6,
+  accountThresholds: {},
   weeklyThreshold: 0.98,
   accountOrder: [],
 }
