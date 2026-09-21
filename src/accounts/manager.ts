@@ -1,0 +1,188 @@
+import { needsRefresh, refreshAccount } from './refresh.ts'
+import { select } from './selector.ts'
+import { writeStatus } from './status.ts'
+import { loadStore, migrateFromOpencodeAuth, updateStore } from './store.ts'
+import { type Account, type Config, DEFAULT_CONFIG } from './types.ts'
+import {
+  fetchProfile,
+  isLimitResponse,
+  parseUsageHeaders,
+  resetFromResponse,
+} from './usage.ts'
+
+export type Logger = (level: 'info' | 'warn' | 'error', message: string) => void
+
+/** Read plugin options, falling back to env vars and then defaults. */
+export function resolveConfig(options?: Record<string, unknown>): Config {
+  const numeric = (value: unknown, fallback: number): number => {
+    const parsed = typeof value === 'string' ? Number(value) : value
+    return typeof parsed === 'number' &&
+      Number.isFinite(parsed) &&
+      parsed > 0 &&
+      parsed <= 1
+      ? parsed
+      : fallback
+  }
+
+  return {
+    switchThreshold: numeric(
+      options?.switchThreshold ?? process.env.ANTHROPIC_SWITCH_THRESHOLD,
+      DEFAULT_CONFIG.switchThreshold,
+    ),
+    weeklyThreshold: numeric(
+      options?.weeklyThreshold ?? process.env.ANTHROPIC_WEEKLY_THRESHOLD,
+      DEFAULT_CONFIG.weeklyThreshold,
+    ),
+    accountOrder: Array.isArray(options?.accountOrder)
+      ? (options.accountOrder as unknown[]).filter(
+          (e): e is string => typeof e === 'string',
+        )
+      : DEFAULT_CONFIG.accountOrder,
+  }
+}
+
+export type Manager = {
+  /** Number of accounts available, used to bound retries. */
+  size: () => number
+  /** Pick an account and guarantee it has a usable access token. */
+  acquire: () => Promise<Account | null>
+  /** Fold a response's rate-limit headers back into the store. */
+  record: (account: Account, response: Response) => void
+  /** Mark an account exhausted so the next attempt moves on. */
+  park: (account: Account, response: Response, body: string) => void
+  isLimit: typeof isLimitResponse
+}
+
+export function createManager(config: Config, log: Logger): Manager {
+  migrateFromOpencodeAuth()
+  let lastActive: string | null = null
+
+  const sync = (mutate: (accounts: Account[]) => void): void => {
+    const store = updateStore((s) => mutate(s.accounts))
+    writeStatus(store, config)
+  }
+
+  return {
+    size: () => loadStore().accounts.length,
+
+    async acquire() {
+      const store = loadStore()
+      const selection = select(store, config)
+      if (!selection) return null
+
+      const account = selection.account
+      if (account.id !== lastActive) {
+        const previous = store.accounts.find((a) => a.id === lastActive)
+        log(
+          'info',
+          previous
+            ? `switched to ${account.label} (${pct(account)}) — left ${previous.label} at ${pct(previous)}`
+            : `using ${account.label} (${pct(account)})`,
+        )
+        lastActive = account.id
+      }
+
+      if (needsRefresh(account)) {
+        try {
+          await refreshAccount(account)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          sync((accounts) => {
+            const target = accounts.find((a) => a.id === account.id)
+            if (target) target.error = message
+          })
+          throw error
+        }
+      }
+
+      // Label lazily: migrated accounts and any login that couldn't reach the
+      // profile endpoint get named the first time they serve a request.
+      if (account.label === 'imported' || !account.tier) {
+        void labelAccount(account, config)
+      }
+
+      const updated = updateStore((s) => {
+        s.active = account.id
+      })
+      writeStatus(updated, config)
+      return account
+    },
+
+    record(account, response) {
+      const usage = parseUsageHeaders(response.headers)
+      if (!usage) return
+      sync((accounts) => {
+        const target = accounts.find((a) => a.id === account.id)
+        if (!target) return
+        target.usage = usage
+        target.lastUsed = Date.now()
+        target.error = null
+      })
+    },
+
+    park(account, response, body) {
+      const reset = resetFromResponse(response)
+      // Without a stated reset, park for the rest of a nominal window rather
+      // than hammering an account we already know is rejecting us.
+      const until = reset ? reset * 1000 : Date.now() + 5 * 60 * 60 * 1000
+      log(
+        'warn',
+        `${account.label} hit its limit — parked until ${new Date(until).toISOString()}`,
+      )
+      sync((accounts) => {
+        const target = accounts.find((a) => a.id === account.id)
+        if (!target) return
+        target.parkedUntil = until
+        target.error = body.slice(0, 200) || `HTTP ${response.status}`
+      })
+    },
+
+    isLimit: isLimitResponse,
+  }
+}
+
+function pct(account: Account): string {
+  return account.usage
+    ? `5h ${Math.round(account.usage.u5h * 100)}%`
+    : '5h unknown'
+}
+
+/**
+ * Name an account from its own profile, so labels can't be mixed up.
+ *
+ * Also adopts Anthropic's account uuid as the local id. Imported and
+ * locally-generated ids would otherwise let the same subscription be added
+ * twice, since `addAccount` dedupes on the profile uuid.
+ */
+export async function labelAccount(
+  account: Account,
+  config: Config,
+): Promise<void> {
+  const profile = await fetchProfile(account.access)
+  if (!profile) return
+
+  const previousId = account.id
+  const store = updateStore((s) => {
+    const target = s.accounts.find((a) => a.id === previousId)
+    if (!target) return
+    if (target.label === 'imported' || !target.label)
+      target.label = profile.email
+    target.org = profile.org
+    target.tier = profile.tier
+
+    if (target.id !== profile.uuid) {
+      const clash = s.accounts.find(
+        (a) => a.id === profile.uuid && a !== target,
+      )
+      // Already present under its real id — drop the duplicate row.
+      if (clash) {
+        s.accounts = s.accounts.filter((a) => a !== target)
+      } else {
+        target.id = profile.uuid
+      }
+      if (s.active === previousId) s.active = profile.uuid
+    }
+  })
+  account.id = profile.uuid
+  writeStatus(store, config)
+}
