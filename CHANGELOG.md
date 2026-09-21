@@ -1,5 +1,13 @@
 # @ex-machina/opencode-anthropic-auth
 
+## 2.0.0-next.2
+
+### Patch Changes
+
+- [#257](https://github.com/ex-machina-co/opencode-anthropic-auth/pull/257) [`ee4b15c`](https://github.com/ex-machina-co/opencode-anthropic-auth/commit/ee4b15c93cbbd168df2035dbbcf30aa64c807d6e) Thanks [@CasualDeveloper](https://github.com/CasualDeveloper)! - Update the OpenCode v2 plugin SDK dependency and import to `@opencode/plugin@2.0.4`, following OpenCode's npm scope migration.
+
+- [#250](https://github.com/ex-machina-co/opencode-anthropic-auth/pull/250) [`7c34383`](https://github.com/ex-machina-co/opencode-anthropic-auth/commit/7c34383291118c30431f9ea328f0c048835abda2) Thanks [@1nk1](https://github.com/1nk1)! - Harden OAuth refresh rotation, request and response body handling, reversible tool-name aliases, and privacy-safe HTTP 429 diagnostics. Refresh requests are single-attempt and deduplicated across plugin instances so a potentially consumed rotating token is never replayed after an ambiguous failure. Update the bundled Claude Code fallback to 2.1.275 and bound the version override without reflecting malformed values into logs.
+
 ## 2.0.0-next.1
 
 ### Patch Changes
