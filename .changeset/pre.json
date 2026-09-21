@@ -6,8 +6,10 @@
   },
   "changesets": [
     "calm-streams-flow",
+    "current-plugin-sdk",
     "olive-moons-repeat",
     "port-opencode-v2-plugin-api",
-    "quiet-moons-repeat"
+    "quiet-moons-repeat",
+    "tidy-clocks-guard"
   ]
 }
