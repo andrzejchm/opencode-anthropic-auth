@@ -147,6 +147,41 @@ describe('addAccount', () => {
     expect(store.accounts[0]!.access).toBe('a2')
   })
 
+  test('repairs a migrated account instead of duplicating it', async () => {
+    // An account imported from OpenCode's single credential keeps a locally
+    // generated id until its profile is read. If its token is revoked before
+    // that happens, re-authorizing it must repair the row, not add a second
+    // one for the same subscription.
+    stubProfile('uuid-real', 'you@work.example')
+    seedStore(
+      testAccount({
+        id: 'local-uuid',
+        label: 'you@work.example',
+        profileAt: null,
+        error: 'Token refresh failed: 400 invalid_grant',
+      }),
+    )
+
+    const account = await addAccount(credentials)
+
+    const store = loadStore()
+    expect(store.accounts).toHaveLength(1)
+    expect(account.id).toBe('uuid-real')
+    expect(store.accounts[0]!.error).toBeNull()
+  })
+
+  test('keeps the active pointer when a migrated account adopts its real id', async () => {
+    stubProfile('uuid-real', 'you@work.example')
+    const store = seedStore(
+      testAccount({ id: 'local-uuid', label: 'you@work.example' }),
+    )
+    expect(store.active).toBe('local-uuid')
+
+    await addAccount(credentials)
+
+    expect(loadStore().active).toBe('uuid-real')
+  })
+
   test('clears a park when an account is re-authorized', async () => {
     stubProfile('uuid-1', 'you@work.example')
     seedStore(
