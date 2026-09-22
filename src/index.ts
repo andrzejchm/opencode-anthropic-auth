@@ -85,8 +85,11 @@ export const AnthropicAuthPlugin: Plugin = async ({ client }, options) => {
 
             let lastResponse: Response | null = null
             for (let attempt = 0; attempt < attempts; attempt++) {
+              // A null account means the selected one could not be made
+              // usable (revoked token, for instance); it has been parked, so
+              // the next pass picks a different one.
               const account = await manager.acquire()
-              if (!account) break
+              if (!account) continue
 
               const requestHeaders = mergeHeaders(input, init)
               setOAuthHeaders(requestHeaders, account.access, claudeCodeVersion)
