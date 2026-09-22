@@ -65,9 +65,12 @@ export const AnthropicAuthPlugin = async ({ client }, options) => {
                         const attempts = canRetry ? Math.max(1, manager.size()) : 1;
                         let lastResponse = null;
                         for (let attempt = 0; attempt < attempts; attempt++) {
+                            // A null account means the selected one could not be made
+                            // usable (revoked token, for instance); it has been parked, so
+                            // the next pass picks a different one.
                             const account = await manager.acquire();
                             if (!account)
-                                break;
+                                continue;
                             const requestHeaders = mergeHeaders(input, init);
                             setOAuthHeaders(requestHeaders, account.access, claudeCodeVersion);
                             const response = await fetch(rewritten.input, {

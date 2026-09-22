@@ -114,11 +114,23 @@ export function createManager(config: Config, log: Logger): Manager {
           await refreshAccount(account)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
+          // A revoked refresh token is permanent until the user logs in again,
+          // so park the account rather than letting one dead credential fail
+          // every request while other accounts sit idle.
+          const revoked = message.includes('invalid_grant')
+          log(
+            'error',
+            revoked
+              ? `${account.label} needs re-authorization — run \`oc-anthropic login\` (${message})`
+              : `${account.label} token refresh failed: ${message}`,
+          )
           sync((accounts) => {
             const target = accounts.find((a) => a.id === account.id)
-            if (target) target.error = message
+            if (!target) return
+            target.error = message
+            target.parkedUntil = Date.now() + (revoked ? 24 * 3600_000 : 60_000)
           })
-          throw error
+          return null
         }
       }
 

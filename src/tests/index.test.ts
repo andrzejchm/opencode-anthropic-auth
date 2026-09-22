@@ -373,6 +373,38 @@ describe('auth.loader', () => {
     expect(tokensUsed).toEqual(['Bearer token-a'])
   })
 
+  test('falls through to the next account when a refresh token is revoked', async () => {
+    // A revoked credential is permanent until the user re-authorizes. It must
+    // not take down every request while healthy accounts sit idle.
+    const tokensUsed: string[] = []
+    globalThis.fetch = mock((input: any, init: any) => {
+      if (extractUrl(input).includes('/v1/oauth/token')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'invalid_grant' }), {
+            status: 400,
+          }),
+        )
+      }
+      tokensUsed.push((init.headers as Headers).get('authorization') ?? '')
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    seedStore(
+      testAccount({ id: 'a', label: 'a', access: 'dead', expires: 0 }),
+      testAccount({ id: 'b', label: 'b', access: 'token-b' }),
+    )
+
+    const result = await loaderFor()
+    const response = await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    expect(response.status).toBe(200)
+    expect(tokensUsed).toEqual(['Bearer token-b'])
+
+    const dead = loadStore().accounts.find((a) => a.id === 'a')!
+    expect(dead.parkedUntil).toBeGreaterThan(Date.now())
+    expect(dead.error).toContain('invalid_grant')
+  })
+
   test('gives up after every account has been rate limited', async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response('rate_limit_error', { status: 429 })),

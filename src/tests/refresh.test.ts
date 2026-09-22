@@ -170,6 +170,33 @@ describe('refreshAccount', () => {
     expect(sent.sort()).toEqual(['refresh-a', 'refresh-b'])
   })
 
+  test('skips the exchange when another process already refreshed', async () => {
+    // Anthropic revokes a refresh token as soon as it is exchanged, so a
+    // second exchange for the same account would invalidate the first
+    // process's credentials. OpenCode's long-lived server racing the CLI hits
+    // this for real.
+    let calls = 0
+    globalThis.fetch = mock(() => {
+      calls += 1
+      return Promise.resolve(tokenResponse())
+    }) as unknown as typeof fetch
+
+    const account = testAccount({ access: 'stale', expires: 0 })
+    seedStore(account)
+
+    // Another process refreshed between us reading the account and refreshing.
+    const store = loadStore()
+    store.accounts[0]!.access = 'refreshed-elsewhere'
+    store.accounts[0]!.expires = Date.now() + 3_600_000
+    saveStore(store)
+
+    const access = await refreshAccount(account)
+
+    expect(calls).toBe(0)
+    expect(access).toBe('refreshed-elsewhere')
+    expect(account.access).toBe('refreshed-elsewhere')
+  })
+
   test('sends the refresh token currently on disk, not a stale snapshot', async () => {
     const sent: string[] = []
     globalThis.fetch = mock((_input: any, init: any) => {

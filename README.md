@@ -84,6 +84,8 @@ Three rules worth knowing:
 
 **A rate-limit response is handled mid-request.** On a 429 the account is parked and the request is retried on the next account, so you don't see the error. Only rate-limit responses trigger this — an ordinary 400 is returned as-is rather than burning every account on one malformed request.
 
+**A broken account doesn't break the rotation.** If an account's refresh token has been revoked, it is parked and the request falls through to the next one. Run `oc-anthropic login` for that account to bring it back; `oc-anthropic status` shows the error against it.
+
 ---
 
 ## Commands
@@ -183,13 +185,15 @@ The plugin runs inside the OpenCode **server**, not the client, so rotation beha
 
 **One account per subscription.** Accounts are keyed by Anthropic's account uuid, so re-authorizing an existing account updates it in place instead of creating a duplicate.
 
+**Token refresh is locked across processes.** Anthropic revokes a refresh token the moment it is exchanged, so two processes refreshing the same account at once revoke each other's credentials — easy to hit, since OpenCode runs a long-lived server while the CLI runs separately. Refreshes take a lock file in the data directory and re-read before exchanging.
+
 ---
 
 ## Development
 
 ```bash
 bun install
-bun test           # 273 tests
+bun test           # 275 tests
 bun run build      # dist/ is committed — see below
 bunx biome check .
 ```
@@ -203,7 +207,8 @@ Rotation logic lives in `src/accounts/`:
 | `selector.ts` | which account serves the next request — pure, heavily tested |
 | `store.ts` | the account file: atomic writes, migration, lookup |
 | `usage.ts` | rate-limit headers, `/api/oauth/usage`, `/api/oauth/profile` |
-| `refresh.ts` | per-account token refresh, deduplicated |
+| `refresh.ts` | per-account token refresh, deduplicated in-process and across processes |
+| `lock.ts` | cross-process file lock |
 | `manager.ts` | glue between the request path and the store |
 | `status.ts` | the secret-free status file |
 | `cli.ts` | `oc-anthropic` |

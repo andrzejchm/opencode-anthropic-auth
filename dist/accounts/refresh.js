@@ -1,4 +1,5 @@
 import { CLIENT_ID, TOKEN_URL } from "../constants.js";
+import { withLock } from "./lock.js";
 import { loadStore, updateStore } from "./store.js";
 /** Refresh a minute early so a token cannot expire mid-flight. */
 const EXPIRY_SKEW_MS = 60_000;
@@ -8,18 +9,45 @@ export function needsRefresh(account, now = Date.now()) {
         !account.expires ||
         account.expires - EXPIRY_SKEW_MS < now);
 }
+/** Has another process already refreshed this account for us? */
+function freshTokenFromDisk(account) {
+    const stored = loadStore().accounts.find((a) => a.id === account.id);
+    if (!stored || needsRefresh(stored))
+        return null;
+    account.refresh = stored.refresh;
+    account.access = stored.access;
+    account.expires = stored.expires;
+    return stored.access;
+}
 /**
  * Exchange an account's refresh token for a fresh access token.
  *
- * Deduplicated per account: concurrent requests share one inflight refresh,
- * because Anthropic rotates the refresh token on every exchange and racing
- * exchanges invalidate each other.
+ * Deduplicated twice over, because Anthropic invalidates a refresh token the
+ * moment it is exchanged, so two simultaneous exchanges revoke each other:
+ *
+ *  - within the process, concurrent callers share one inflight promise;
+ *  - across processes, a file lock plus a re-read covers OpenCode's long-lived
+ *    server racing the CLI or a second server.
  */
 export async function refreshAccount(account) {
     const existing = inflight.get(account.id);
     if (existing)
         return existing;
-    const promise = (async () => {
+    const promise = withLock(`anthropic-refresh-${account.id}`, async () => {
+        // Re-read inside the lock: whoever held it before us may have just
+        // refreshed this very account, and exchanging again would revoke it.
+        const alreadyFresh = freshTokenFromDisk(account);
+        if (alreadyFresh)
+            return alreadyFresh;
+        return exchangeRefreshToken(account);
+    }).finally(() => {
+        inflight.delete(account.id);
+    });
+    inflight.set(account.id, promise);
+    return promise;
+}
+async function exchangeRefreshToken(account) {
+    return (async () => {
         const maxRetries = 2;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {
@@ -77,11 +105,7 @@ export async function refreshAccount(account) {
             }
         }
         throw new Error('Token refresh exhausted all retries');
-    })().finally(() => {
-        inflight.delete(account.id);
-    });
-    inflight.set(account.id, promise);
-    return promise;
+    })();
 }
 function currentRefreshToken(account) {
     try {
