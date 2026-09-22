@@ -1,6 +1,10 @@
 node_modules
-dist/
 .turbo/
+
+# dist/ is committed on purpose: OpenCode installs plugins straight from this
+# repo, and bun blocks the `prepare` build script, so a source-only checkout
+# would give consumers a plugin with no entrypoint. The pre-commit hook keeps
+# it in sync.
 
 # Agent Facets managed
 .agents/

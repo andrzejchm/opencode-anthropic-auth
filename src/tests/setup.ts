@@ -12,3 +12,6 @@ import { join } from 'node:path'
 const dir = mkdtempSync(join(tmpdir(), 'oc-anthropic-test-'))
 process.env.ANTHROPIC_ACCOUNTS_FILE = join(dir, 'accounts.json')
 process.env.ANTHROPIC_STATUS_FILE = join(dir, 'status.json')
+// Migration reads OpenCode's own credential file to seed the store, so this
+// has to move too — otherwise a test run imports real refresh tokens.
+process.env.OPENCODE_AUTH_FILE = join(dir, 'opencode-auth.json')

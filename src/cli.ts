@@ -1,19 +1,18 @@
-#!/usr/bin/env bun
 import { createInterface } from 'node:readline/promises'
-import { addAccount } from '../src/accounts/login.ts'
+import { addAccount } from './accounts/login.ts'
 import {
   labelAccount,
   normalizeThreshold,
   resolveConfig,
-} from '../src/accounts/manager.ts'
+} from './accounts/manager.ts'
 import {
   effectiveU5h,
   effectiveU7d,
   ordered,
   stateOf,
   thresholdFor,
-} from '../src/accounts/selector.ts'
-import { writeStatus } from '../src/accounts/status.ts'
+} from './accounts/selector.ts'
+import { writeStatus } from './accounts/status.ts'
 import {
   findAccount,
   loadStore,
@@ -21,10 +20,9 @@ import {
   saveStore,
   statusPath,
   storePath,
-} from '../src/accounts/store.ts'
-import type { Config } from '../src/accounts/types.ts'
-import { probeUsage } from '../src/accounts/usage.ts'
-import { authorize, exchange } from '../src/auth.ts'
+} from './accounts/store.ts'
+import { probeUsage } from './accounts/usage.ts'
+import { authorize, exchange } from './auth.ts'
 
 const config = resolveConfig()
 
@@ -43,7 +41,9 @@ function relative(ms: number | null): string {
 }
 
 function pad(value: string, width: number): string {
-  return value.length > width ? `${value.slice(0, width - 1)}…` : value.padEnd(width)
+  return value.length > width
+    ? `${value.slice(0, width - 1)}…`
+    : value.padEnd(width)
 }
 
 function status(): void {
@@ -82,17 +82,27 @@ function status(): void {
 
 async function login(): Promise<void> {
   const result = await authorize('max')
-  console.log(`\nOpen this URL, approve, then paste the code back here:\n\n${result.url}\n`)
+  console.log(
+    `\nOpen this URL, approve, then paste the code back here:\n\n${result.url}\n`,
+  )
 
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   const code = await rl.question('code: ')
   rl.close()
 
-  const credentials = await exchange(code, result.verifier, result.redirectUri, result.state)
-  if (credentials.type === 'failed') fail('authorization failed — the code may have expired')
+  const credentials = await exchange(
+    code,
+    result.verifier,
+    result.redirectUri,
+    result.state,
+  )
+  if (credentials.type === 'failed')
+    fail('authorization failed — the code may have expired')
 
   const account = await addAccount(credentials, config)
-  console.log(`\nadded ${account.label}${account.org ? ` (${account.org})` : ''}\n`)
+  console.log(
+    `\nadded ${account.label}${account.org ? ` (${account.org})` : ''}\n`,
+  )
   await refresh()
 }
 
@@ -205,56 +215,62 @@ function unpark(): void {
   status()
 }
 
-const [command = 'status', ...args] = process.argv.slice(2)
-migrateFromOpencodeAuth()
+/** CLI entrypoint. Exported so the published bin can be a thin JS shim. */
+export async function main(
+  argv: string[] = process.argv.slice(2),
+): Promise<void> {
+  const [command = 'status', ...args] = argv
+  migrateFromOpencodeAuth()
 
-switch (command) {
-  case 'status':
-    status()
-    break
-  case 'login':
-    await login()
-    break
-  case 'refresh':
-    await refresh()
-    break
-  case 'order':
-    reorder(args)
-    break
-  case 'label':
-    if (args.length < 2) fail('usage: oc-anthropic label <account> <new-label>')
-    relabel(args[0] as string, args[1] as string)
-    break
-  case 'threshold':
-    if (args.length < 2)
-      fail('usage: oc-anthropic threshold <account> <percent|default>')
-    setThreshold(args[0] as string, args[1] as string)
-    break
-  case 'use':
-    if (!args[0]) fail('usage: oc-anthropic use <account>')
-    use(args[0])
-    break
-  case 'unpark':
-    unpark()
-    break
-  case 'remove':
-    if (!args[0]) fail('usage: oc-anthropic remove <account>')
-    remove(args[0])
-    break
-  default:
-    console.log(
-      [
-        'oc-anthropic <command>',
-        '',
-        '  status              show accounts and rotation state (default)',
-        '  login               authorize another subscription',
-        '  refresh             poll live usage for every account',
-        '  order <label>...    set rotation order',
-        '  label <acct> <new>  rename an account',
-        '  threshold <acct> <n> per-account switch point, e.g. 80 (or `default`)',
-        '  use <acct>          force-switch to an account now',
-        '  unpark              clear all parks',
-        '  remove <acct>       drop an account',
-      ].join('\n'),
-    )
+  switch (command) {
+    case 'status':
+      status()
+      break
+    case 'login':
+      await login()
+      break
+    case 'refresh':
+      await refresh()
+      break
+    case 'order':
+      reorder(args)
+      break
+    case 'label':
+      if (args.length < 2)
+        fail('usage: oc-anthropic label <account> <new-label>')
+      relabel(args[0] as string, args[1] as string)
+      break
+    case 'threshold':
+      if (args.length < 2)
+        fail('usage: oc-anthropic threshold <account> <percent|default>')
+      setThreshold(args[0] as string, args[1] as string)
+      break
+    case 'use':
+      if (!args[0]) fail('usage: oc-anthropic use <account>')
+      use(args[0])
+      break
+    case 'unpark':
+      unpark()
+      break
+    case 'remove':
+      if (!args[0]) fail('usage: oc-anthropic remove <account>')
+      remove(args[0])
+      break
+    default:
+      console.log(
+        [
+          'oc-anthropic <command>',
+          '',
+          '  status              show accounts and rotation state (default)',
+          '  login               authorize another subscription',
+          '  refresh             poll live usage for every account',
+          '  order <label>...    set rotation order',
+          '  label <acct> <new>  rename an account',
+          '  threshold <acct> <n> per-account switch point, e.g. 80 (or `default`)',
+          '  use <acct>          force-switch to an account now',
+          '  unpark              clear all parks',
+          '  remove <acct>       drop an account',
+        ].join('\n'),
+      )
+  }
 }

@@ -34,6 +34,7 @@ export async function addAccount(
       existing.label = profile.email
       existing.org = profile.org
       existing.tier = profile.tier
+      existing.profileAt = Date.now()
     }
     saveStore(store)
     writeStatus(store, config)
@@ -49,6 +50,7 @@ export async function addAccount(
     access: credentials.access,
     expires: credentials.expires,
     usage: null,
+    profileAt: profile ? Date.now() : null,
     threshold: null,
     parkedUntil: 0,
     lastUsed: null,

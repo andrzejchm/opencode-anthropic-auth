@@ -14,28 +14,23 @@ import {
 } from './transform.ts'
 
 /**
- * Report a problem with the version override to the server log.
+ * Write a line to the OpenCode server log.
  *
- * Best-effort: a misconfigured override either degrades to the bundled version
- * or is honoured as set, so a logging failure must not take the plugin down
- * with it.
+ * Best-effort: diagnostics must never take the plugin down, so a logging
+ * failure is swallowed and the request proceeds.
  */
-async function logVersionOverrideIssue(
+async function log(
   client: unknown,
-  level: 'warn' | 'error',
+  level: 'info' | 'warn' | 'error',
   message: string,
 ): Promise<void> {
   try {
     // biome-ignore lint/suspicious/noExplicitAny: SDK types don't expose app.log
     await (client as any)?.app?.log({
-      body: {
-        service: 'anthropic-auth',
-        level,
-        message,
-      },
+      body: { service: 'anthropic-auth', level, message },
     })
   } catch {
-    /* Logging is best-effort; the resolved version still applies. */
+    /* Logging is best-effort. */
   }
 }
 
@@ -44,9 +39,9 @@ export const AnthropicAuthPlugin: Plugin = async ({ client }, options) => {
   // version in both the user-agent and the billing header.
   const resolution = resolveClaudeCodeVersion()
   if (resolution.type === 'invalid') {
-    await logVersionOverrideIssue(client, 'error', resolution.error)
+    await log(client, 'error', resolution.error)
   } else if (resolution.type === 'outdated') {
-    await logVersionOverrideIssue(client, 'warn', resolution.warning)
+    await log(client, 'warn', resolution.warning)
   }
   // Only a malformed override lacks a usable version; an outdated one was set
   // deliberately, so it is reported as configured.
@@ -54,12 +49,10 @@ export const AnthropicAuthPlugin: Plugin = async ({ client }, options) => {
     resolution.type === 'invalid' ? CLAUDE_CODE_VERSION : resolution.version
 
   const config = resolveConfig(options)
+  // Rotation logs keep their own level: switching accounts is routine, and
+  // reporting it as a warning would bury the ones that matter.
   const manager = createManager(config, (level, message) => {
-    void logVersionOverrideIssue(
-      client,
-      level === 'error' ? 'error' : 'warn',
-      message,
-    )
+    void log(client, level, message)
   })
 
   return {

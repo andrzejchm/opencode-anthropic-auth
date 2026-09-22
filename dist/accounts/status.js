@@ -1,0 +1,49 @@
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { effectiveU5h, effectiveU7d, ordered, stateOf, thresholdFor, } from "./selector.js";
+import { statusPath } from "./store.js";
+const iso = (ms) => ms ? new Date(ms).toISOString() : null;
+export function buildStatus(store, config, now = Date.now()) {
+    const rows = ordered(store, config).map((account, index) => ({
+        order: index + 1,
+        id: account.id,
+        label: account.label,
+        org: account.org,
+        tier: account.tier,
+        state: stateOf(account, store, config, now),
+        threshold: thresholdFor(account, config),
+        u5h: round(effectiveU5h(account, now)),
+        resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
+        u7d: round(effectiveU7d(account, now)),
+        lastUsed: iso(account.lastUsed),
+        error: account.error,
+    }));
+    return {
+        updatedAt: new Date(now).toISOString(),
+        active: store.accounts.find((a) => a.id === store.active)?.label ?? null,
+        switchThreshold: config.switchThreshold,
+        accounts: rows,
+    };
+}
+function round(value) {
+    return Math.round(value * 1000) / 1000;
+}
+/**
+ * Mirror the store to a secret-free file.
+ *
+ * Derived on every write rather than maintained separately, so it cannot drift
+ * from the store. This is the file to `cat`, `jq` or `watch` — the store itself
+ * holds refresh tokens and is not meant to be read by a human.
+ */
+export function writeStatus(store, config) {
+    try {
+        const path = statusPath();
+        mkdirSync(dirname(path), { recursive: true });
+        const tmp = `${path}.${process.pid}.tmp`;
+        writeFileSync(tmp, `${JSON.stringify(buildStatus(store, config), null, 2)}\n`);
+        renameSync(tmp, path);
+    }
+    catch {
+        /* Status is observability only; never break a request over it. */
+    }
+}
