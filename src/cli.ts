@@ -5,9 +5,12 @@ import {
   normalizeThreshold,
   resolveConfig,
 } from './accounts/manager.ts'
+import { needsRefresh, refreshAccount } from './accounts/refresh.ts'
 import {
   effectiveU5h,
   effectiveU7d,
+  isUsageStale,
+  isUsageUnknown,
   ordered,
   stateOf,
   thresholdFor,
@@ -20,6 +23,7 @@ import {
   saveStore,
   statusPath,
   storePath,
+  updateStore,
 } from './accounts/store.ts'
 import { probeUsage } from './accounts/usage.ts'
 import { authorize, exchange } from './auth.ts'
@@ -38,6 +42,17 @@ function relative(ms: number | null): string {
   const hours = Math.floor(delta / 3_600_000)
   const minutes = Math.round((delta % 3_600_000) / 60_000)
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`
+}
+
+/**
+ * Render a utilization we may not actually know.
+ *
+ * An expired or missing reading is shown as `?` rather than 0%: reporting a
+ * confident 0 for an account we haven't heard from is how a exhausted
+ * subscription ends up looking idle.
+ */
+function percent(value: number, known: boolean): string {
+  return known ? `${Math.round(value * 100)}%` : '?'
 }
 
 function pad(value: string, width: number): string {
@@ -60,17 +75,18 @@ function status(): void {
   for (const [index, account] of ordered(store, config).entries()) {
     const state = stateOf(account, store, config, now)
     const marker = state === 'active' ? ' > ' : '   '
-    const reset = account.usage?.reset5h ? account.usage.reset5h * 1000 : null
+    const known = !isUsageStale(account, now) && !isUsageUnknown(account)
+    const reset = known && account.usage ? account.usage.reset5h * 1000 : null
     console.log(
       marker +
         pad(String(index + 1), 3) +
         pad(account.label, 32) +
         pad(account.org ?? '—', 14) +
         pad(account.tier ?? '—', 9) +
-        pad(`${Math.round(effectiveU5h(account, now) * 100)}%`, 6) +
+        pad(percent(effectiveU5h(account, now), known), 6) +
         pad(`${Math.round(thresholdFor(account, config) * 100)}%`, 8) +
         pad(relative(reset), 11) +
-        pad(`${Math.round(effectiveU7d(account, now) * 100)}%`, 6) +
+        pad(percent(effectiveU7d(account, now), known), 6) +
         (state === 'active' ? 'ACTIVE' : state),
     )
     if (account.error) console.log(`      ! ${account.error.slice(0, 100)}`)
@@ -106,25 +122,56 @@ async function login(): Promise<void> {
   await refresh()
 }
 
-/** Poll live usage for every account so `status` reflects reality immediately. */
+/**
+ * Poll live usage for every account.
+ *
+ * Renews the OAuth token first. Access tokens last about eight hours, so by
+ * the time anyone reaches for this command they are usually expired — probing
+ * with one returns 401 and the command would appear to do nothing at all.
+ * Failures are reported per account rather than swallowed.
+ */
 async function refresh(): Promise<void> {
-  const store = loadStore()
-  await Promise.all(
-    store.accounts.map(async (account) => {
+  const results = await Promise.all(
+    loadStore().accounts.map(async (account) => {
+      try {
+        if (needsRefresh(account)) await refreshAccount(account)
+      } catch (error) {
+        return { label: account.label, error: message(error) }
+      }
+
       const usage = await probeUsage(account.access)
-      if (usage) account.usage = usage
-      if (!account.tier) await labelAccount(account, config)
+      if (!usage) {
+        return { label: account.label, error: 'usage endpoint did not respond' }
+      }
+
+      updateStore((store) => {
+        const target = store.accounts.find((a) => a.id === account.id)
+        if (!target) return
+        target.usage = usage
+        target.error = null
+      })
+
+      if (account.profileAt === null) await labelAccount(account, config)
+      return { label: account.label, error: null }
     }),
   )
-  // Re-read: labelAccount writes through the store on its own.
-  const merged = loadStore()
-  for (const account of merged.accounts) {
-    const polled = store.accounts.find((a) => a.id === account.id)
-    if (polled?.usage) account.usage = polled.usage
-  }
-  saveStore(merged)
-  writeStatus(merged, config)
+
+  writeStatus(loadStore(), config)
   status()
+
+  const failures = results.filter((r) => r.error)
+  if (failures.length > 0) {
+    console.error('')
+    for (const failure of failures) {
+      console.error(`could not refresh ${failure.label}: ${failure.error}`)
+    }
+    console.error('\nRun `oc-anthropic login` to re-authorize an account.')
+    process.exitCode = 1
+  }
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function reorder(labels: string[]): void {

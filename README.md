@@ -169,6 +169,20 @@ switched to you@side.example (5h 8%) — left you@work.example at 5h 81%
 
 ---
 
+## Restart OpenCode after installing or updating
+
+OpenCode loads plugins **once, when the server starts**. If you use the web or desktop app, or run `opencode serve`, that process keeps the plugin it loaded at startup for its entire life.
+
+A server that has been up for days is still running the plugin from the day it started. Rotation will not happen, and `oc-anthropic use` will appear to do nothing, because the running server never re-reads the code.
+
+```bash
+pkill -f 'opencode serve'   # then start it again, or restart the desktop app
+```
+
+Worth checking if rotation isn't happening: `ps -eo pid,lstart,command | grep 'opencode serve'`.
+
+---
+
 ## Works with the web and desktop apps
 
 The plugin runs inside the OpenCode **server**, not the client, so rotation behaves the same whether you use the TUI, the web app, or the desktop app. There is deliberately no TUI panel — the status file and CLI work everywhere.
@@ -183,6 +197,8 @@ The plugin runs inside the OpenCode **server**, not the client, so rotation beha
 
 **Prompt caching is per-account.** Every switch costs one cache-miss re-read of the conversation. Parking-until-reset keeps that to roughly one switch per account per window — don't set thresholds so tight that it thrashes.
 
+**Usage readings expire.** A reading only describes the 5-hour window it was taken in. Once that window ends, the account is re-probed via `/api/oauth/usage` before it can be selected — an old timestamp is never taken to mean an empty window, because the account may have been used since by another machine or by Claude Code itself. Until a reading is refreshed, `oc-anthropic status` shows `?` rather than a confident `0%`.
+
 **One account per subscription.** Accounts are keyed by Anthropic's account uuid, so re-authorizing an existing account updates it in place instead of creating a duplicate.
 
 **Token refresh is locked across processes.** Anthropic revokes a refresh token the moment it is exchanged, so two processes refreshing the same account at once revoke each other's credentials — easy to hit, since OpenCode runs a long-lived server while the CLI runs separately. Refreshes take a lock file in the data directory and re-read before exchanging.
@@ -193,7 +209,7 @@ The plugin runs inside the OpenCode **server**, not the client, so rotation beha
 
 ```bash
 bun install
-bun test           # 275 tests
+bun test           # 276 tests
 bun run build      # dist/ is committed — see below
 bunx biome check .
 ```

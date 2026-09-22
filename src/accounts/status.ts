@@ -3,6 +3,8 @@ import { dirname } from 'node:path'
 import {
   effectiveU5h,
   effectiveU7d,
+  isUsageStale,
+  isUsageUnknown,
   ordered,
   stateOf,
   thresholdFor,
@@ -19,6 +21,11 @@ export type StatusRow = {
   state: string
   /** Effective 5h switch threshold for this account (0..1). */
   threshold: number
+  /**
+   * True when the reading predates the window it describes, so `u5h` is an
+   * optimistic guess rather than an observation.
+   */
+  stale: boolean
   u5h: number
   resets5h: string | null
   u7d: number
@@ -49,6 +56,7 @@ export function buildStatus(
     tier: account.tier,
     state: stateOf(account, store, config, now),
     threshold: thresholdFor(account, config),
+    stale: isUsageStale(account, now) || isUsageUnknown(account),
     u5h: round(effectiveU5h(account, now)),
     resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
     u7d: round(effectiveU7d(account, now)),

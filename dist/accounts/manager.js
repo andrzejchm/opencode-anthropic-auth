@@ -1,9 +1,9 @@
 import { needsRefresh, refreshAccount } from "./refresh.js";
-import { select } from "./selector.js";
+import { isUsageStale, select } from "./selector.js";
 import { writeStatus } from "./status.js";
 import { loadStore, migrateFromOpencodeAuth, updateStore } from "./store.js";
 import { DEFAULT_CONFIG } from "./types.js";
-import { fetchProfile, isLimitResponse, parseUsageHeaders, resetFromResponse, } from "./usage.js";
+import { fetchProfile, isLimitResponse, parseUsageHeaders, probeUsage, resetFromResponse, } from "./usage.js";
 /** Read plugin options, falling back to env vars and then defaults. */
 export function resolveConfig(options) {
     const numeric = (value, fallback) => {
@@ -52,9 +52,40 @@ export function normalizeThreshold(value) {
         return null;
     return fraction;
 }
+/** Don't re-probe the same account more often than this. */
+const PROBE_COOLDOWN_MS = 60_000;
 export function createManager(config, log) {
     migrateFromOpencodeAuth();
     let lastActive = null;
+    const lastProbe = new Map();
+    /**
+     * Replace expired snapshots with live readings.
+     *
+     * Without this the selector would take an expired window to mean an empty
+     * one, and happily route to an account that has since been exhausted by
+     * another client. Only stale accounts are probed, and only once a minute
+     * each, so the steady-state cost is nothing — response headers keep active
+     * accounts current for free.
+     */
+    async function refreshStaleUsage() {
+        const now = Date.now();
+        const stale = loadStore().accounts.filter((account) => isUsageStale(account, now) &&
+            now - (lastProbe.get(account.id) ?? 0) > PROBE_COOLDOWN_MS &&
+            !needsRefresh(account));
+        if (stale.length === 0)
+            return;
+        await Promise.all(stale.map(async (account) => {
+            lastProbe.set(account.id, now);
+            const usage = await probeUsage(account.access);
+            if (!usage)
+                return;
+            sync((accounts) => {
+                const target = accounts.find((a) => a.id === account.id);
+                if (target)
+                    target.usage = usage;
+            });
+        }));
+    }
     const sync = (mutate) => {
         const store = updateStore((s) => mutate(s.accounts));
         writeStatus(store, config);
@@ -62,6 +93,7 @@ export function createManager(config, log) {
     return {
         size: () => loadStore().accounts.length,
         async acquire() {
+            await refreshStaleUsage();
             const store = loadStore();
             const selection = select(store, config);
             if (!selection)
