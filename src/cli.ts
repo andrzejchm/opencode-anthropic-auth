@@ -1,3 +1,5 @@
+import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { addAccount } from './accounts/login.ts'
 import {
@@ -21,7 +23,6 @@ import {
   loadStore,
   migrateFromOpencodeAuth,
   saveStore,
-  statusPath,
   storePath,
   updateStore,
 } from './accounts/store.ts'
@@ -53,6 +54,12 @@ function relative(ms: number | null): string {
  */
 function percent(value: number, known: boolean): string {
   return known ? `${Math.round(value * 100)}%` : '?'
+}
+
+/** Abbreviate the home directory, so output is shorter and carries no username. */
+function tilde(path: string): string {
+  const home = homedir()
+  return path.startsWith(home) ? `~${path.slice(home.length)}` : path
 }
 
 function pad(value: string, width: number): string {
@@ -92,7 +99,7 @@ function status(): void {
     if (account.error) console.log(`      ! ${account.error.slice(0, 100)}`)
   }
   console.log(
-    `\ndefault switch ${Math.round(config.switchThreshold * 100)}% · store ${storePath()} · status ${statusPath()}`,
+    `\ndefault switch ${Math.round(config.switchThreshold * 100)}% · ${tilde(dirname(storePath()))}`,
   )
 }
 
@@ -338,15 +345,21 @@ export async function main(
         [
           'oc-anthropic <command>',
           '',
-          '  status              show accounts and rotation state (default)',
-          '  login               authorize another subscription',
-          '  refresh             poll live usage for every account',
-          '  order <label>...    set rotation order',
-          '  label <acct> <new>  rename an account',
-          '  threshold <acct> <n> per-account switch point, e.g. 80 (or `default`)',
-          '  use <acct>          force-switch to an account now',
-          '  unpark              clear all parks',
-          '  remove <acct>       drop an account',
+          '  status                  accounts and rotation state (default)',
+          '  status --cached         same, without fetching live usage',
+          '  refresh                 force a live re-read of every account',
+          '',
+          '  login                   authorize another subscription',
+          '  remove <acct>           drop an account',
+          '',
+          '  order <acct>...         set rotation order',
+          '  threshold <acct> <pct>  switch point for one account, or `default`',
+          '  label <acct> <name>     rename an account',
+          '',
+          '  use <acct>              force-switch to an account now',
+          '  unpark                  clear all parks',
+          '',
+          '<acct> takes a label, a unique prefix, or an account id.',
         ].join('\n'),
       )
   }

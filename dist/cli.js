@@ -1,10 +1,12 @@
+import { homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { addAccount } from "./accounts/login.js";
 import { labelAccount, normalizeThreshold, resolveConfig, } from "./accounts/manager.js";
 import { needsRefresh, refreshAccount } from "./accounts/refresh.js";
 import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, } from "./accounts/selector.js";
 import { writeStatus } from "./accounts/status.js";
-import { findAccount, loadStore, migrateFromOpencodeAuth, saveStore, statusPath, storePath, updateStore, } from "./accounts/store.js";
+import { findAccount, loadStore, migrateFromOpencodeAuth, saveStore, storePath, updateStore, } from "./accounts/store.js";
 import { probeUsage } from "./accounts/usage.js";
 import { authorize, exchange } from "./auth.js";
 const config = resolveConfig();
@@ -31,6 +33,11 @@ function relative(ms) {
  */
 function percent(value, known) {
     return known ? `${Math.round(value * 100)}%` : '?';
+}
+/** Abbreviate the home directory, so output is shorter and carries no username. */
+function tilde(path) {
+    const home = homedir();
+    return path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
 function pad(value, width) {
     return value.length > width
@@ -63,7 +70,7 @@ function status() {
         if (account.error)
             console.log(`      ! ${account.error.slice(0, 100)}`);
     }
-    console.log(`\ndefault switch ${Math.round(config.switchThreshold * 100)}% · store ${storePath()} · status ${statusPath()}`);
+    console.log(`\ndefault switch ${Math.round(config.switchThreshold * 100)}% · ${tilde(dirname(storePath()))}`);
 }
 async function login() {
     const result = await authorize('max');
@@ -284,15 +291,21 @@ export async function main(argv = process.argv.slice(2)) {
             console.log([
                 'oc-anthropic <command>',
                 '',
-                '  status              show accounts and rotation state (default)',
-                '  login               authorize another subscription',
-                '  refresh             poll live usage for every account',
-                '  order <label>...    set rotation order',
-                '  label <acct> <new>  rename an account',
-                '  threshold <acct> <n> per-account switch point, e.g. 80 (or `default`)',
-                '  use <acct>          force-switch to an account now',
-                '  unpark              clear all parks',
-                '  remove <acct>       drop an account',
+                '  status                  accounts and rotation state (default)',
+                '  status --cached         same, without fetching live usage',
+                '  refresh                 force a live re-read of every account',
+                '',
+                '  login                   authorize another subscription',
+                '  remove <acct>           drop an account',
+                '',
+                '  order <acct>...         set rotation order',
+                '  threshold <acct> <pct>  switch point for one account, or `default`',
+                '  label <acct> <name>     rename an account',
+                '',
+                '  use <acct>              force-switch to an account now',
+                '  unpark                  clear all parks',
+                '',
+                '<acct> takes a label, a unique prefix, or an account id.',
             ].join('\n'));
     }
 }
