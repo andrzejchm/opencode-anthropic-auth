@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
+import { loadStore } from '../accounts/store'
 import { AnthropicAuthPlugin } from '../index'
+import { isolateStore, seedStore, testAccount } from './helpers/store'
+
+isolateStore()
 
 const originalFetch = globalThis.fetch
 
@@ -83,12 +87,30 @@ describe('Claude Pro/Max OAuth method', () => {
     expect(credentials.type).toBe('success')
     expect(credentials.access).toBe('access-token')
     expect(credentials.refresh).toBe('refresh-token')
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.url).toBe('https://platform.claude.com/v1/oauth/token')
 
+    expect(calls[0]?.url).toBe('https://platform.claude.com/v1/oauth/token')
     const body = JSON.parse(String(calls[0]?.init?.body))
     expect(body.code).toBe('authorization-code')
     expect(body.grant_type).toBe('authorization_code')
+
+    // The callback also adds the subscription to the multi-account store,
+    // which looks up the profile so the account labels itself.
+    expect(calls[1]?.url).toBe('https://api.anthropic.com/api/oauth/profile')
+    expect(loadStore().accounts).toHaveLength(1)
+  })
+
+  test('callback appends to the account store rather than replacing it', async () => {
+    seedStore(testAccount({ id: 'existing', label: 'existing' }))
+
+    const method = await getOAuthMethod(0)
+    const authorization = await method.authorize()
+    installFetchStub(() => tokenResponse())
+
+    await authorization.callback(callbackCode(authorization.url))
+
+    const labels = loadStore().accounts.map((a) => a.label)
+    expect(labels).toContain('existing')
+    expect(labels).toHaveLength(2)
   })
 
   test('callback reports a failed token exchange', async () => {

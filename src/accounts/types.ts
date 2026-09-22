@@ -34,6 +34,14 @@ export type Account = {
   expires: number
   usage: Usage | null
   /**
+   * Epoch ms of the last `/api/oauth/profile` lookup, or `null` if never.
+   *
+   * Tracked explicitly rather than inferred from a missing label or tier:
+   * personal accounts legitimately have no organization, so inferring would
+   * re-fetch the profile on every single request forever.
+   */
+  profileAt: number | null
+  /**
    * Per-account 5h switch threshold (0..1). `null` falls back to the global
    * `switchThreshold`, so accounts only carry a value when deliberately tuned.
    */
@@ -73,5 +81,3 @@ export const DEFAULT_CONFIG: Config = {
   weeklyThreshold: 0.98,
   accountOrder: [],
 }
-
-export const EMPTY_STORE: Store = { version: 1, active: null, accounts: [] }

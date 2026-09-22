@@ -32,6 +32,7 @@ function account(
       reset7d: Math.floor((NOW + 48 * HOUR) / 1000),
       at: NOW,
     },
+    profileAt: Date.now(),
     threshold: null,
     parkedUntil: 0,
     lastUsed: null,

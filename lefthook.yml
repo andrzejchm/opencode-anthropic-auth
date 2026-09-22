@@ -3,3 +3,9 @@ pre-commit:
     biome:
       glob: "*.{ts,js,json}"
       run: bunx biome check --no-errors-on-unmatched {staged_files}
+    # dist/ is committed so the plugin can be installed straight from GitHub.
+    # Rebuilding here stops a source change from shipping against a stale build.
+    build:
+      glob: "src/**/*.ts"
+      run: bun run build && git add dist
+      stage_fixed: true

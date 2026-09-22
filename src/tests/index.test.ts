@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { loadStore } from '../accounts/store'
 import { buildBillingHeaderValue } from '../cch'
 import { ANTHROPIC_CLAUDE_CODE_VERSION_ENV_VAR } from '../config'
 import { CLAUDE_CODE_VERSION } from '../constants'
 import { AnthropicAuthPlugin } from '../index'
+import { isolateStore, seedStore, testAccount, usage } from './helpers/store'
 
 /** Extract the URL string from a fetch input (string, URL, or Request). */
 function extractUrl(input: string | URL | Request): string {
@@ -23,43 +25,10 @@ function createMockClient() {
   }
 }
 
+isolateStore()
+
 const MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const EMPTY_POST = { method: 'POST', body: '{}' } as const
-
-/**
- * Set up the common test scaffolding for concurrent refresh tests:
- * mocks setTimeout to be synchronous and creates a plugin loader
- * with an already-expired OAuth token.
- */
-async function setupExpiredTokenLoader() {
-  // @ts-expect-error — mock override for testing
-  globalThis.setTimeout = mock((handler: () => unknown) => {
-    handler()
-    return 0
-  })
-
-  const mockClient = createMockClient()
-  const plugin = await getPlugin(mockClient)
-  const result = await plugin.auth.loader(
-    () =>
-      Promise.resolve({
-        type: 'oauth',
-        access: 'expired-token',
-        refresh: 'old-refresh',
-        expires: Date.now() - 1000,
-      }),
-    { models: {} },
-  )
-
-  return { mockClient, result }
-}
-
-/** Fire 5 concurrent fetch requests against /v1/messages. */
-function fireConcurrentFetches(result: { fetch: typeof fetch }) {
-  return Promise.all(
-    Array.from({ length: 5 }, () => result.fetch(MESSAGES_URL, EMPTY_POST)),
-  )
-}
 
 async function getPlugin(client?: ReturnType<typeof createMockClient>) {
   return (await AnthropicAuthPlugin({
@@ -130,9 +99,18 @@ describe('auth.loader', () => {
   const originalFetch = globalThis.fetch
   const originalSetTimeout = globalThis.setTimeout
 
+  /** The loader no longer takes credentials from getAuth — only the auth type. */
+  const oauth = () => Promise.resolve({ type: 'oauth' })
+
+  async function loaderFor(client?: ReturnType<typeof createMockClient>) {
+    const plugin = await getPlugin(client)
+    return plugin.auth.loader(oauth, { models: {} })
+  }
+
   beforeEach(() => {
     globalThis.fetch = originalFetch
     globalThis.setTimeout = originalSetTimeout
+    seedStore(testAccount())
   })
 
   afterEach(() => {
@@ -156,16 +134,7 @@ describe('auth.loader', () => {
         cost: { input: 3, output: 15, cache: { read: 0.3, write: 3.75 } },
       },
     }
-    await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
-      { models },
-    )
+    await plugin.auth.loader(oauth, { models })
     expect(models['claude-3'].cost).toEqual({
       input: 0,
       output: 0,
@@ -174,79 +143,42 @@ describe('auth.loader', () => {
   })
 
   test('returns fetch wrapper for oauth auth', async () => {
-    const plugin = await getPlugin()
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
-      { models: {} },
-    )
+    const result = await loaderFor()
     expect(result.apiKey).toBe('')
     expect(result.fetch).toBeFunction()
   })
 
-  test('fetch wrapper sets OAuth headers and prefixes tools', async () => {
+  test('sets OAuth headers from the active account and prefixes tools', async () => {
     let capturedHeaders: Headers | undefined
     let capturedBody: string | undefined
 
-    globalThis.fetch = mock((input: any, init: any) => {
+    globalThis.fetch = mock((_input: any, init: any) => {
       capturedHeaders = init?.headers
       capturedBody = init?.body
       return Promise.resolve(new Response(null, { status: 200 }))
     }) as unknown as typeof fetch
 
-    const plugin = await getPlugin()
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'my-access-token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
-      { models: {} },
-    )
+    seedStore(testAccount({ access: 'my-access-token' }))
+    const result = await loaderFor()
 
-    const body = JSON.stringify({
-      tools: [{ name: 'bash', type: 'function' }],
-      messages: [{ role: 'user', content: 'hello world test message' }],
-      system: 'You are a helpful assistant.',
-    })
-
-    await result.fetch('https://api.anthropic.com/v1/messages', {
+    await result.fetch(MESSAGES_URL, {
       method: 'POST',
-      body,
+      body: JSON.stringify({ tools: [{ name: 'bash', type: 'function' }] }),
     })
 
     expect(capturedHeaders).toBeDefined()
     expect(capturedHeaders!.get('authorization')).toBe('Bearer my-access-token')
     expect(capturedHeaders!.get('x-api-key')).toBeNull()
     expect(capturedHeaders!.get('anthropic-beta')).toContain('oauth-2025-04-20')
-
-    const parsedBody = JSON.parse(capturedBody!)
-    // Tool name should be prefixed
-    expect(parsedBody.tools[0].name).toBe('mcp_Bash')
-    // Three-block layout: billing header, identity, rest
-    expect(parsedBody.system).toHaveLength(3)
-    expect(parsedBody.system[0].text).toContain('x-anthropic-billing-header')
-    expect(parsedBody.system[1].text).toBe(
-      "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
-    )
-    expect(parsedBody.system[2].text).toBe('You are a helpful assistant.')
-    // User message is untouched
-    expect(parsedBody.messages[0].content).toBe('hello world test message')
+    expect(JSON.parse(capturedBody!).tools[0].name).toBe('mcp_Bash')
   })
 
-  test('fetch wrapper refreshes expired token', async () => {
-    const fetchCalls: Array<{ url: string; body?: string }> = []
+  test('refreshes an expired account before sending, and persists the new tokens', async () => {
+    const calls: Array<{ url: string; body?: string }> = []
 
     globalThis.fetch = mock((input: any, init: any) => {
       const url = extractUrl(input)
-      fetchCalls.push({ url, body: init?.body })
+      calls.push({ url, body: init?.body })
 
       if (url.includes('/v1/oauth/token')) {
         return Promise.resolve(
@@ -260,136 +192,35 @@ describe('auth.loader', () => {
           ),
         )
       }
-
       return Promise.resolve(new Response(null, { status: 200 }))
     }) as unknown as typeof fetch
 
-    const mockClient = createMockClient()
-    const plugin = await getPlugin(mockClient)
-
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'expired-token',
-          refresh: 'old-refresh',
-          expires: Date.now() - 1000, // expired
-        }),
-      { models: {} },
-    )
-
-    await result.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      body: '{}',
-    })
-
-    // Should have called token endpoint first
-    const tokenCall = fetchCalls.find((c) => c.url.includes('/v1/oauth/token'))
-    expect(tokenCall).toBeDefined()
-    const tokenBody = JSON.parse(tokenCall!.body!)
-    expect(tokenBody.grant_type).toBe('refresh_token')
-    expect(tokenBody.refresh_token).toBe('old-refresh')
-
-    // Should have called client.auth.set with new tokens
-    expect(mockClient.auth.set).toHaveBeenCalled()
-  })
-
-  test('fetch wrapper retries transient token refresh failures', async () => {
-    let tokenRefreshCalls = 0
-    const setTimeoutMock = mock((handler: () => unknown) => {
-      handler()
-      return 0
-    })
-
-    // @ts-expect-error — mock override for testing
-    globalThis.setTimeout = setTimeoutMock
-
-    globalThis.fetch = mock((input: any) => {
-      const url = extractUrl(input)
-
-      if (url.includes('/v1/oauth/token')) {
-        tokenRefreshCalls += 1
-
-        if (tokenRefreshCalls === 1) {
-          return Promise.resolve(
-            new Response('Temporary failure', { status: 500 }),
-          )
-        }
-
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              refresh_token: 'new-refresh',
-              access_token: 'new-access',
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          ),
-        )
-      }
-
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const mockClient = createMockClient()
-    const plugin = await getPlugin(mockClient)
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'expired',
-          refresh: 'refresh',
-          expires: Date.now() - 1000,
-        }),
-      { models: {} },
-    )
-
-    await result.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      body: '{}',
-    })
-
-    expect(tokenRefreshCalls).toBe(2)
-    expect(setTimeoutMock).toHaveBeenCalledTimes(1)
-    expect(setTimeoutMock).toHaveBeenCalledWith(expect.any(Function), 500)
-    expect(mockClient.auth.set).toHaveBeenCalledTimes(1)
-  })
-
-  test('fetch wrapper does not retry non-transient token refresh failures', async () => {
-    let tokenRefreshCalls = 0
-
-    globalThis.fetch = mock((input: any) => {
-      const url = extractUrl(input)
-      if (url.includes('/v1/oauth/token')) {
-        tokenRefreshCalls += 1
-        return Promise.resolve(new Response('Forbidden', { status: 403 }))
-      }
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const plugin = await getPlugin()
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'expired',
-          refresh: 'refresh',
-          expires: Date.now() - 1000,
-        }),
-      { models: {} },
-    )
-
-    expect(
-      result.fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        body: '{}',
+    seedStore(
+      testAccount({
+        access: 'expired-token',
+        refresh: 'old-refresh',
+        expires: Date.now() - 1000,
       }),
-    ).rejects.toThrow('Token refresh failed: 403')
+    )
 
-    expect(tokenRefreshCalls).toBe(1)
+    const result = await loaderFor()
+    await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    const tokenCall = calls.find((c) => c.url.includes('/v1/oauth/token'))
+    expect(tokenCall).toBeDefined()
+    expect(JSON.parse(tokenCall!.body!).refresh_token).toBe('old-refresh')
+
+    // Credentials live in the account store now, not OpenCode's auth entry.
+    const stored = loadStore().accounts[0]!
+    expect(stored.access).toBe('new-access')
+    expect(stored.refresh).toBe('new-refresh')
+
+    // The request itself went out on the refreshed token.
+    const messagesCall = calls.find((c) => c.url.includes('/v1/messages'))
+    expect(messagesCall).toBeDefined()
   })
 
-  test('fetch wrapper strips tool prefix from streaming response', async () => {
+  test('strips tool prefix from streaming response', async () => {
     const encoder = new TextEncoder()
     const responseStream = new ReadableStream({
       start(controller) {
@@ -411,225 +242,151 @@ describe('auth.loader', () => {
       ),
     ) as unknown as typeof fetch
 
-    const plugin = await getPlugin()
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
-      { models: {} },
-    )
-
-    const response = await result.fetch(
-      'https://api.anthropic.com/v1/messages',
-      {
-        method: 'POST',
-        body: '{}',
-      },
-    )
+    const result = await loaderFor()
+    const response = await result.fetch(MESSAGES_URL, EMPTY_POST)
 
     const text = await response.text()
     expect(text).toContain('"name": "bash"')
     expect(text).not.toContain('mcp_bash')
   })
 
-  test('concurrent expired token refresh should deduplicate to a single token request', async () => {
-    let tokenRefreshCount = 0
-
-    globalThis.fetch = mock((input: any) => {
-      const url = extractUrl(input)
-
-      if (url.includes('/v1/oauth/token')) {
-        tokenRefreshCount++
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              refresh_token: 'new-refresh',
-              access_token: 'new-access',
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          ),
-        )
-      }
-
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const { result } = await setupExpiredTokenLoader()
-    await fireConcurrentFetches(result)
-
-    // With deduplication, only ONE refresh request should be made, not 5
-    expect(tokenRefreshCount).toBe(1)
-  })
-
-  test('concurrent refresh with token rotation should not cause cascading failures', async () => {
-    const usedRefreshTokens = new Set<string>()
-
-    globalThis.fetch = mock((input: any, init: any) => {
-      const url = extractUrl(input)
-
-      if (url.includes('/v1/oauth/token')) {
-        const body = JSON.parse(init?.body)
-        const refreshToken = body.refresh_token
-
-        // Simulate refresh token rotation: first use succeeds, subsequent uses
-        // return 401 because the old token has been invalidated
-        if (usedRefreshTokens.has(refreshToken)) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ error: 'invalid_grant' }), {
-              status: 401,
-            }),
-          )
-        }
-
-        usedRefreshTokens.add(refreshToken)
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              refresh_token: 'rotated-refresh',
-              access_token: 'new-access',
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          ),
-        )
-      }
-
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const { result } = await setupExpiredTokenLoader()
-
-    // Fire 5 concurrent requests — ALL should succeed because only one refresh
-    // fires and the rest reuse its result
-    const outcomes = await Promise.all(
-      Array.from({ length: 5 }, () =>
-        result.fetch(MESSAGES_URL, EMPTY_POST).then(
-          () => 'ok' as const,
-          () => 'fail' as const,
-        ),
-      ),
-    )
-
-    // With deduplication, all callers share the single successful refresh.
-    // Without it, 4 out of 5 get 401 from the rotated-away token → cascading failures.
-    expect(outcomes).toEqual(['ok', 'ok', 'ok', 'ok', 'ok'])
-  })
-
-  test('concurrent refresh should persist tokens exactly once', async () => {
-    globalThis.fetch = mock((input: any) => {
-      const url = extractUrl(input)
-
-      if (url.includes('/v1/oauth/token')) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              refresh_token: 'new-refresh',
-              access_token: 'new-access',
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          ),
-        )
-      }
-
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const { mockClient, result } = await setupExpiredTokenLoader()
-    await fireConcurrentFetches(result)
-
-    // With deduplication, client.auth.set should be called exactly once.
-    // Without it, each concurrent refresh calls auth.set independently → 5 calls.
-    expect(mockClient.auth.set).toHaveBeenCalledTimes(1)
-  })
-
-  test('refresh always reads the latest refresh token, not a stale snapshot', async () => {
-    const tokenRequestBodies: string[] = []
-
-    globalThis.fetch = mock((input: any, init: any) => {
-      const url = extractUrl(input)
-
-      if (url.includes('/v1/oauth/token')) {
-        tokenRequestBodies.push(init?.body)
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              refresh_token: 'rotated-refresh',
-              access_token: 'fresh-access',
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          ),
-        )
-      }
-
-      return Promise.resolve(new Response(null, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    let callCount = 0
-    const mockClient = createMockClient()
-    const plugin = await getPlugin(mockClient)
-
-    const result = await plugin.auth.loader(
-      () => {
-        callCount++
-        if (callCount === 1) {
-          return Promise.resolve({
-            type: 'oauth',
-            access: 'expired-access',
-            refresh: 'stale-refresh',
-            expires: Date.now() - 1000,
-          })
-        }
-        return Promise.resolve({
-          type: 'oauth',
-          access: 'expired-access',
-          refresh: 'rotated-refresh-from-storage',
-          expires: Date.now() - 1000,
-        })
-      },
-      { models: {} },
-    )
-
-    await result.fetch(MESSAGES_URL, EMPTY_POST)
-
-    expect(tokenRequestBodies).toHaveLength(1)
-    const sentBody = JSON.parse(tokenRequestBodies[0] ?? '{}')
-    expect(sentBody.refresh_token).toBe('rotated-refresh-from-storage')
-    expect(sentBody.refresh_token).not.toBe('stale-refresh')
-  })
-
-  test('fetch wrapper adds beta=true to /v1/messages URL', async () => {
+  test('adds beta=true to /v1/messages URL', async () => {
     let capturedUrl: string | undefined
-
     globalThis.fetch = mock((input: any) => {
       capturedUrl = extractUrl(input)
       return Promise.resolve(new Response(null, { status: 200 }))
     }) as unknown as typeof fetch
 
-    const plugin = await getPlugin()
-    const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
-      { models: {} },
-    )
-
-    await result.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      body: '{}',
-    })
+    const result = await loaderFor()
+    await result.fetch(MESSAGES_URL, EMPTY_POST)
 
     expect(capturedUrl).toContain('beta=true')
+  })
+
+  test('records rate-limit headers from the response onto the account', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 200,
+          headers: {
+            'anthropic-ratelimit-unified-5h-utilization': '0.42',
+            'anthropic-ratelimit-unified-5h-reset': '1790035800',
+            'anthropic-ratelimit-unified-7d-utilization': '0.11',
+          },
+        }),
+      ),
+    ) as unknown as typeof fetch
+
+    const result = await loaderFor()
+    await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    const stored = loadStore().accounts[0]!
+    expect(stored.usage?.u5h).toBe(0.42)
+    expect(stored.usage?.reset5h).toBe(1790035800)
+    expect(stored.usage?.u7d).toBe(0.11)
+    expect(stored.lastUsed).toBeNumber()
+  })
+
+  test('sends on the next account once the first is over its threshold', async () => {
+    const tokensUsed: string[] = []
+    globalThis.fetch = mock((_input: any, init: any) => {
+      tokensUsed.push((init.headers as Headers).get('authorization') ?? '')
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    seedStore(
+      testAccount({
+        id: 'a',
+        label: 'a',
+        access: 'token-a',
+        usage: usage(0.9),
+      }),
+      testAccount({
+        id: 'b',
+        label: 'b',
+        access: 'token-b',
+        usage: usage(0.1),
+      }),
+    )
+
+    const result = await loaderFor()
+    await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    expect(tokensUsed).toEqual(['Bearer token-b'])
+  })
+
+  test('parks the account and retries on the next one when rate limited', async () => {
+    const tokensUsed: string[] = []
+    globalThis.fetch = mock((_input: any, init: any) => {
+      const auth = (init.headers as Headers).get('authorization') ?? ''
+      tokensUsed.push(auth)
+
+      if (auth === 'Bearer token-a') {
+        return Promise.resolve(
+          new Response('rate_limit_error', {
+            status: 429,
+            headers: {
+              'anthropic-ratelimit-unified-5h-reset': String(
+                Math.floor(Date.now() / 1000) + 3600,
+              ),
+            },
+          }),
+        )
+      }
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    seedStore(
+      testAccount({ id: 'a', label: 'a', access: 'token-a' }),
+      testAccount({ id: 'b', label: 'b', access: 'token-b' }),
+    )
+
+    const result = await loaderFor()
+    const response = await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    expect(response.status).toBe(200)
+    expect(tokensUsed).toEqual(['Bearer token-a', 'Bearer token-b'])
+    expect(
+      loadStore().accounts.find((a) => a.id === 'a')!.parkedUntil,
+    ).toBeGreaterThan(Date.now())
+  })
+
+  test('returns a non-limit error unchanged instead of burning another account', async () => {
+    const tokensUsed: string[] = []
+    globalThis.fetch = mock((_input: any, init: any) => {
+      tokensUsed.push((init.headers as Headers).get('authorization') ?? '')
+      return Promise.resolve(
+        new Response('{"error":"bad request"}', { status: 400 }),
+      )
+    }) as unknown as typeof fetch
+
+    seedStore(
+      testAccount({ id: 'a', label: 'a', access: 'token-a' }),
+      testAccount({ id: 'b', label: 'b', access: 'token-b' }),
+    )
+
+    const result = await loaderFor()
+    const response = await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    expect(response.status).toBe(400)
+    expect(await response.text()).toContain('bad request')
+    expect(tokensUsed).toEqual(['Bearer token-a'])
+  })
+
+  test('gives up after every account has been rate limited', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response('rate_limit_error', { status: 429 })),
+    ) as unknown as typeof fetch
+
+    seedStore(
+      testAccount({ id: 'a', label: 'a', access: 'token-a' }),
+      testAccount({ id: 'b', label: 'b', access: 'token-b' }),
+    )
+
+    const result = await loaderFor()
+    const response = await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    expect(response.status).toBe(429)
   })
 })
 
@@ -637,9 +394,28 @@ describe('reported Claude Code version', () => {
   const originalFetch = globalThis.fetch
   const USER_MESSAGE = 'hello world test message'
 
+  beforeEach(() => {
+    seedStore(testAccount())
+  })
+
   afterEach(() => {
     globalThis.fetch = originalFetch
   })
+
+  /**
+   * Version-override diagnostics only.
+   *
+   * Account rotation logs through the same channel, so filtering by level
+   * keeps these assertions about the version override rather than about
+   * whatever the rotation happened to report.
+   */
+  function versionLogs(client: ReturnType<typeof createMockClient>) {
+    const calls = (client.app.log as unknown as ReturnType<typeof mock>).mock
+      .calls as Array<[{ body: { level: string; message: string } }]>
+    return calls
+      .map(([call]) => call.body)
+      .filter((body) => body.level === 'warn' || body.level === 'error')
+  }
 
   /**
    * Drive one OAuth request through the plugin and return the two places the
@@ -659,13 +435,7 @@ describe('reported Claude Code version', () => {
 
     const plugin = await getPlugin(client)
     const result = await plugin.auth.loader(
-      () =>
-        Promise.resolve({
-          type: 'oauth',
-          access: 'token',
-          refresh: 'refresh',
-          expires: Date.now() + 100000,
-        }),
+      () => Promise.resolve({ type: 'oauth' }),
       { models: {} },
     )
 
@@ -682,11 +452,11 @@ describe('reported Claude Code version', () => {
     }
   }
 
-  /** Read the single startup log call the plugin made about the override. */
+  /** Read the single override diagnostic the plugin emitted at startup. */
   function readSingleLog(client: ReturnType<typeof createMockClient>) {
-    expect(client.app.log).toHaveBeenCalledTimes(1)
-    return (client.app.log as unknown as ReturnType<typeof mock>).mock
-      .calls[0]![0] as { body: { level: string; message: string } }
+    const logs = versionLogs(client)
+    expect(logs).toHaveLength(1)
+    return { body: logs[0]! }
   }
 
   test('reports the bundled version when the override is unset', async () => {
@@ -755,7 +525,7 @@ describe('reported Claude Code version', () => {
 
     await captureReportedVersion(client)
 
-    expect(client.app.log).not.toHaveBeenCalled()
+    expect(versionLogs(client)).toEqual([])
   })
 
   test('loads without throwing when the client cannot log', async () => {

@@ -122,9 +122,10 @@ export function createManager(config: Config, log: Logger): Manager {
         }
       }
 
-      // Label lazily: migrated accounts and any login that couldn't reach the
-      // profile endpoint get named the first time they serve a request.
-      if (account.label === 'imported' || !account.tier) {
+      // Label lazily, once: migrated accounts are named the first time they
+      // serve a request. Guarded by profileAt so an account that genuinely has
+      // no org doesn't re-request its profile on every call.
+      if (account.profileAt === null || account.profileAt === undefined) {
         void labelAccount(account, config)
       }
 
@@ -196,6 +197,7 @@ export async function labelAccount(
       target.label = profile.email
     target.org = profile.org
     target.tier = profile.tier
+    target.profileAt = Date.now()
 
     if (target.id !== profile.uuid) {
       const clash = s.accounts.find(

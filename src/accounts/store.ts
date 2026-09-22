@@ -7,7 +7,7 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { type Account, EMPTY_STORE, type Store } from './types.ts'
+import type { Account, Store } from './types.ts'
 
 /**
  * OpenCode's data directory. Honours `XDG_DATA_HOME` the same way OpenCode
@@ -35,15 +35,34 @@ export function statusPath(): string {
   )
 }
 
+/**
+ * OpenCode's own single-slot credential file, read once to seed the store.
+ *
+ * Overridable so tests never touch the developer's real credentials — without
+ * it, migration reads `~/.local/share/opencode/auth.json` even when the store
+ * itself has been redirected.
+ */
 function opencodeAuthPath(): string {
-  return join(dataDir(), 'auth.json')
+  return process.env.OPENCODE_AUTH_FILE || join(dataDir(), 'auth.json')
+}
+
+/**
+ * A fresh empty store.
+ *
+ * Built per call rather than spread from a shared constant: callers mutate the
+ * returned object (`accounts.push(...)`), and a shallow copy would leave every
+ * "empty" store sharing one array — so accounts added while the file is
+ * missing would leak into subsequent reads.
+ */
+function emptyStore(): Store {
+  return { version: 1, active: null, accounts: [] }
 }
 
 export function loadStore(): Store {
   try {
     const raw = readFileSync(storePath(), 'utf8')
     const parsed = JSON.parse(raw) as Store
-    if (!parsed || !Array.isArray(parsed.accounts)) return { ...EMPTY_STORE }
+    if (!parsed || !Array.isArray(parsed.accounts)) return emptyStore()
     return {
       version: 1,
       active: parsed.active ?? null,
@@ -51,7 +70,7 @@ export function loadStore(): Store {
     }
   } catch {
     // Missing or corrupt store is not fatal — migration repopulates it.
-    return { ...EMPTY_STORE }
+    return emptyStore()
   }
 }
 
@@ -115,6 +134,7 @@ export function migrateFromOpencodeAuth(): Account | null {
       access: entry.access,
       expires: entry.expires ?? 0,
       usage: null,
+      profileAt: null,
       threshold: null,
       parkedUntil: 0,
       lastUsed: null,
