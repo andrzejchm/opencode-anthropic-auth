@@ -119,20 +119,36 @@ async function login(): Promise<void> {
   console.log(
     `\nadded ${account.label}${account.org ? ` (${account.org})` : ''}\n`,
   )
-  await refresh()
+  await liveStatus(true)
 }
 
+/** A reading older than this is re-fetched before being shown. */
+const FRESH_MS = 60_000
+
+type SyncFailure = { label: string; error: string }
+
 /**
- * Poll live usage for every account.
+ * Bring the store's usage readings up to date.
  *
  * Renews the OAuth token first. Access tokens last about eight hours, so by
- * the time anyone reaches for this command they are usually expired — probing
- * with one returns 401 and the command would appear to do nothing at all.
- * Failures are reported per account rather than swallowed.
+ * the time anyone runs a command they are usually expired — probing with one
+ * returns 401, and the command would appear to do nothing at all.
+ *
+ * `force` re-reads every account; otherwise only those whose reading has
+ * expired or gone stale are fetched, so repeated calls are cheap.
  */
-async function refresh(): Promise<void> {
+async function syncUsage(force: boolean): Promise<SyncFailure[]> {
+  const now = Date.now()
+  const candidates = loadStore().accounts.filter(
+    (account) =>
+      force ||
+      isUsageUnknown(account) ||
+      isUsageStale(account, now) ||
+      now - (account.usage?.at ?? 0) > FRESH_MS,
+  )
+
   const results = await Promise.all(
-    loadStore().accounts.map(async (account) => {
+    candidates.map(async (account): Promise<SyncFailure | null> => {
       try {
         if (needsRefresh(account)) await refreshAccount(account)
       } catch (error) {
@@ -152,22 +168,35 @@ async function refresh(): Promise<void> {
       })
 
       if (account.profileAt === null) await labelAccount(account, config)
-      return { label: account.label, error: null }
+      return null
     }),
   )
 
   writeStatus(loadStore(), config)
-  status()
+  return results.filter((r): r is SyncFailure => r !== null)
+}
 
-  const failures = results.filter((r) => r.error)
-  if (failures.length > 0) {
-    console.error('')
-    for (const failure of failures) {
-      console.error(`could not refresh ${failure.label}: ${failure.error}`)
-    }
-    console.error('\nRun `oc-anthropic login` to re-authorize an account.')
-    process.exitCode = 1
+function reportFailures(failures: SyncFailure[]): void {
+  if (failures.length === 0) return
+  console.error('')
+  for (const failure of failures) {
+    console.error(`could not refresh ${failure.label}: ${failure.error}`)
   }
+  console.error('\nRun `oc-anthropic login` to re-authorize an account.')
+  process.exitCode = 1
+}
+
+/**
+ * Show current state, fetching live numbers first.
+ *
+ * `status` is the command people reach for when something looks wrong, so it
+ * has to show what is actually true rather than the last thing we happened to
+ * record. Only stale readings are fetched, and `--cached` skips the network
+ * entirely.
+ */
+async function liveStatus(force = false): Promise<void> {
+  reportFailures(await syncUsage(force))
+  status()
 }
 
 function message(error: unknown): string {
@@ -271,13 +300,14 @@ export async function main(
 
   switch (command) {
     case 'status':
-      status()
+      if (args.includes('--cached')) status()
+      else await liveStatus()
       break
     case 'login':
       await login()
       break
     case 'refresh':
-      await refresh()
+      await liveStatus(true)
       break
     case 'order':
       reorder(args)

@@ -93,7 +93,8 @@ Three rules worth knowing:
 ```
 oc-anthropic                       # status (default)
 oc-anthropic status                # usage, thresholds, resets, state
-oc-anthropic refresh               # poll live usage for all accounts
+oc-anthropic status --cached       # same, without touching the network
+oc-anthropic refresh               # force a live re-read of every account
 
 oc-anthropic login                 # add another subscription
 oc-anthropic remove <acct>         # drop one
@@ -110,7 +111,7 @@ oc-anthropic unpark                # clear all parks, restart from #1
 
 `use` parks everything ahead of the target for an hour, so it sticks until those expire or you run `unpark`.
 
-`refresh` only matters for accounts that haven't served a request recently; normal usage keeps itself current for free.
+`status` fetches live numbers for any account whose reading is stale or over a minute old, so what you see is what is true. Readings newer than that come straight from the store, which makes repeated runs instant. `--cached` skips the network entirely; `refresh` forces a re-read of everything.
 
 ---
 
