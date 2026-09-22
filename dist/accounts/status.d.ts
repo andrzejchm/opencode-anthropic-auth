@@ -8,6 +8,11 @@ export type StatusRow = {
     state: string;
     /** Effective 5h switch threshold for this account (0..1). */
     threshold: number;
+    /**
+     * True when the reading predates the window it describes, so `u5h` is an
+     * optimistic guess rather than an observation.
+     */
+    stale: boolean;
     u5h: number;
     resets5h: string | null;
     u7d: number;

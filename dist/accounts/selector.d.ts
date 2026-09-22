@@ -1,12 +1,23 @@
 import type { Account, Config, Store } from './types.ts';
 export type AccountState = 'active' | 'idle' | 'parked' | 'blocked' | 'error';
 /**
+ * Has the window this snapshot describes already rolled over?
+ *
+ * A snapshot only describes the window it was taken in. Once that window ends
+ * the reading says nothing about the new one — the account may have been used
+ * heavily since, by Claude Code, another machine, or an OpenCode server we
+ * weren't watching. Callers must re-read usage rather than assume.
+ */
+export declare function isUsageStale(account: Account, now: number): boolean;
+/** No reading at all — a freshly added account that has yet to serve anything. */
+export declare function isUsageUnknown(account: Account): boolean;
+/**
  * Utilization we should act on right now.
  *
- * A stored snapshot describes a window that may already have rolled over. Once
- * `reset5h` is in the past the window is empty regardless of what the last
- * reading said, so this is what makes an account come back by itself after its
- * five hours elapse — no polling required.
+ * An expired snapshot reports 0, which is the optimistic reading. That is only
+ * safe because `Manager.acquire` re-probes stale accounts before selecting —
+ * inferring an empty window from an old timestamp is how an account at 100%
+ * ends up looking idle.
  */
 export declare function effectiveU5h(account: Account, now: number): number;
 export declare function effectiveU7d(account: Account, now: number): number;

@@ -373,6 +373,56 @@ describe('auth.loader', () => {
     expect(tokensUsed).toEqual(['Bearer token-a'])
   })
 
+  test('re-probes an account whose window expired instead of assuming it is empty', async () => {
+    // Regression: an expired snapshot used to be read as 0% utilization, so an
+    // account that had been exhausted since — by another machine, Claude Code,
+    // or an OpenCode server we weren't watching — looked idle and got picked.
+    const tokensUsed: string[] = []
+    globalThis.fetch = mock((input: any, init: any) => {
+      const url = extractUrl(input)
+      if (url.includes('/api/oauth/usage')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              five_hour: { utilization: 97.0, resets_at: null },
+              seven_day: { utilization: 10.0, resets_at: null },
+            }),
+          ),
+        )
+      }
+      tokensUsed.push((init.headers as Headers).get('authorization') ?? '')
+      return Promise.resolve(new Response(null, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    seedStore(
+      // Reading taken in a window that ended an hour ago.
+      testAccount({
+        id: 'a',
+        label: 'a',
+        access: 'token-a',
+        usage: usage(0.1, {
+          reset5h: Math.floor((Date.now() - 3_600_000) / 1000),
+          at: Date.now() - 7_200_000,
+        }),
+      }),
+      testAccount({
+        id: 'b',
+        label: 'b',
+        access: 'token-b',
+        usage: usage(0.1),
+      }),
+    )
+
+    const result = await loaderFor()
+    await result.fetch(MESSAGES_URL, EMPTY_POST)
+
+    // The probe reports 97%, so the request must not go to account a.
+    expect(tokensUsed).toEqual(['Bearer token-b'])
+    expect(loadStore().accounts.find((a) => a.id === 'a')!.usage?.u5h).toBe(
+      0.97,
+    )
+  })
+
   test('falls through to the next account when a refresh token is revoked', async () => {
     // A revoked credential is permanent until the user re-authorizes. It must
     // not take down every request while healthy accounts sit idle.
