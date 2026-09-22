@@ -1,7 +1,20 @@
 import { writeStatus } from "./status.js";
 import { loadStore, saveStore } from "./store.js";
-import { DEFAULT_CONFIG } from "./types.js";
+import { DEFAULT_CONFIG, } from "./types.js";
 import { fetchProfile } from "./usage.js";
+/**
+ * Locate an existing row for the subscription this profile describes.
+ *
+ * The account uuid is the identity, but an account migrated from OpenCode's
+ * single credential is stored under a locally generated id until its profile
+ * is first read — and that read never happens if its token has been revoked.
+ * Falling back to the email stops re-authorizing such an account from adding a
+ * duplicate instead of repairing the original.
+ */
+function findSameSubscription(store, profile) {
+    return (store.accounts.find((a) => a.id === profile.uuid) ??
+        store.accounts.find((a) => a.label === profile.email));
+}
 /**
  * Add a freshly authorized subscription to the store.
  *
@@ -13,9 +26,13 @@ import { fetchProfile } from "./usage.js";
 export async function addAccount(credentials, config = DEFAULT_CONFIG) {
     const profile = await fetchProfile(credentials.access);
     const store = loadStore();
-    const existing = profile
-        ? store.accounts.find((a) => a.id === profile.uuid)
-        : undefined;
+    const existing = profile ? findSameSubscription(store, profile) : undefined;
+    if (existing && profile && existing.id !== profile.uuid) {
+        // Matched by email: adopt the real identity so future logins match on uuid.
+        if (store.active === existing.id)
+            store.active = profile.uuid;
+        existing.id = profile.uuid;
+    }
     if (existing) {
         existing.refresh = credentials.refresh;
         existing.access = credentials.access;
@@ -27,6 +44,7 @@ export async function addAccount(credentials, config = DEFAULT_CONFIG) {
             existing.org = profile.org;
             existing.tier = profile.tier;
             existing.profileAt = Date.now();
+            existing.error = null;
         }
         saveStore(store);
         writeStatus(store, config);
