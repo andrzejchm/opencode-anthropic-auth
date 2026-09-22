@@ -15,13 +15,19 @@ A fork of [ex-machina-co/opencode-anthropic-auth](https://github.com/ex-machina-
 
 You log into 2+ Claude subscriptions. The plugin uses the first one until it reaches its switch threshold, moves to the next, and picks an account back up on its own once its 5-hour window resets.
 
+![oc-anthropic in action](./images/cli.gif)
+
 ```
 $ oc-anthropic status
-   #  ACCOUNT                ORG             TIER      5H   SWITCH  RESETS IN  7D    STATE
- > 1  you@work.example       Acme            max_5x    12%  80%     4h 8m      28%   ACTIVE
-   2  you@side.example       Side Project    max_5x     8%  60%     18m        48%   idle
-   3  you@personal.example   —               max_20x    0%  90%     4h 58m     13%   idle
+   #  ACCOUNT                 ORG             TIER      5H    SWITCH  RESETS IN  7D    STATE
+   1  work@example.com        Acme            max_5x    83%   80%     2h 18m     41%   parked
+ > 2  side@example.com        Side Project    max_5x    12%   60%     4h 6m      52%   ACTIVE
+   3  personal@example.com    —               max_20x    2%   90%     4h 48m     14%   idle
+
+default switch 60% · ~/.local/share/opencode
 ```
+
+Account 1 is past its 80% threshold, so it handed over and is waiting for its window to reset. Account 2 is serving requests.
 
 Usage is read from the `anthropic-ratelimit-unified-*` headers that every `/v1/messages` response already carries, so tracking costs no extra requests and adds no latency.
 
@@ -36,19 +42,19 @@ This is not on npm. It installs straight from GitHub, so pin a commit or tag rat
 ```jsonc
 // ~/.config/opencode/opencode.json
 {
-  "plugin": ["github:andrzejchm/opencode-anthropic-auth#v2.0.0"]
+  "plugin": ["github:andrzejchm/opencode-anthropic-auth#v2.1.0"]
 }
 ```
 
 Remove `@ex-machina/opencode-anthropic-auth` if you have it — two plugins registering the same auth provider will fight.
 
 > [!TIP]
-> Pin to a tag or commit. An unpinned plugin re-resolves on startup, which is a supply-chain risk for *any* plugin, not just this one. `#v2.0.0` above is that pin.
+> Pin to a tag or commit. An unpinned plugin re-resolves on startup, which is a supply-chain risk for *any* plugin, not just this one. `#v2.1.0` above is that pin.
 
 ### 2. Install the CLI
 
 ```bash
-bun add -g github:andrzejchm/opencode-anthropic-auth#v2.0.0
+bun add -g github:andrzejchm/opencode-anthropic-auth#v2.1.0
 ```
 
 Gives you `oc-anthropic`. The plugin works without it — the CLI is how you add accounts and see what's going on.
@@ -97,17 +103,17 @@ oc-anthropic status --cached       # same, without touching the network
 oc-anthropic refresh               # force a live re-read of every account
 
 oc-anthropic login                 # add another subscription
-oc-anthropic remove <acct>         # drop one
+oc-anthropic remove <acct>         # drop an account
 
 oc-anthropic order <a> <b> <c>     # set rotation order
-oc-anthropic threshold <acct> 80   # per-account switch point (or `default`)
+oc-anthropic threshold <acct> 80   # switch point for one account (or `default`)
 oc-anthropic label <acct> <name>   # rename
 
 oc-anthropic use <acct>            # force-switch now, ignoring thresholds
 oc-anthropic unpark                # clear all parks, restart from #1
 ```
 
-`<acct>` takes a full label, a unique prefix, or an account id — `oc-anthropic threshold you@wo 80` works.
+`<acct>` takes a full label, a unique prefix, or an account id — `oc-anthropic threshold work@ex 80` works.
 
 `use` parks everything ahead of the target for an hour, so it sticks until those expire or you run `unpark`.
 
@@ -123,11 +129,11 @@ Everything is optional. The CLI writes to the store and always wins over config,
 // ~/.config/opencode/opencode.json
 {
   "plugin": [
-    ["github:andrzejchm/opencode-anthropic-auth#v2.0.0", {
+    ["github:andrzejchm/opencode-anthropic-auth#v2.1.0", {
       "switchThreshold": 0.6,
       "weeklyThreshold": 0.98,
-      "accountOrder": ["you@work.example", "you@side.example"],
-      "accountThresholds": { "you@work.example": 80 }
+      "accountOrder": ["work@example.com", "side@example.com"],
+      "accountThresholds": { "work@example.com": 80 }
     }]
   ]
 }
@@ -160,12 +166,12 @@ watch -n5 'jq -r ".accounts[] | \"\(.state)\t\(.label)\t\(.u5h*100)%\"" \
   ~/.local/share/opencode/anthropic-status.json'
 ```
 
-Both paths can be overridden with `ANTHROPIC_ACCOUNTS_FILE` and `ANTHROPIC_STATUS_FILE`.
+Both paths can be overridden with `ANTHROPIC_ACCOUNTS_FILE` and `ANTHROPIC_STATUS_FILE`. `OPENCODE_AUTH_FILE` overrides where the one-time import reads OpenCode's own credential from.
 
 Switches are also logged to the OpenCode server log, with the reason:
 
 ```
-switched to you@side.example (5h 8%) — left you@work.example at 5h 81%
+switched to side@example.com (5h 12%) — left work@example.com at 5h 83%
 ```
 
 ---
@@ -210,7 +216,7 @@ The plugin runs inside the OpenCode **server**, not the client, so rotation beha
 
 ```bash
 bun install
-bun test           # 276 tests
+bun test           # 278 tests
 bun run build      # dist/ is committed — see below
 bunx biome check .
 ```
