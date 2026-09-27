@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline/promises';
 import { addAccount } from "./accounts/login.js";
 import { labelAccount, normalizeThreshold, resolveConfig, } from "./accounts/manager.js";
 import { needsRefresh, refreshAccount } from "./accounts/refresh.js";
-import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, } from "./accounts/selector.js";
+import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, weeklyThresholdFor, } from "./accounts/selector.js";
 import { writeStatus } from "./accounts/status.js";
 import { findAccount, loadStore, migrateFromOpencodeAuth, saveStore, storePath, updateStore, } from "./accounts/store.js";
 import { probeUsage } from "./accounts/usage.js";
@@ -51,7 +51,7 @@ function status() {
         return;
     }
     const now = Date.now();
-    console.log(`   ${pad('#', 3)}${pad('ACCOUNT', 32)}${pad('ORG', 14)}${pad('TIER', 9)}${pad('5H', 6)}${pad('SWITCH', 8)}${pad('RESETS IN', 11)}${pad('7D', 6)}STATE`);
+    console.log(`   ${pad('#', 3)}${pad('ACCOUNT', 32)}${pad('ORG', 14)}${pad('TIER', 9)}${pad('5H', 6)}${pad('SWITCH', 8)}${pad('RESETS IN', 11)}${pad('7D', 6)}${pad('WEEKLY', 8)}STATE`);
     for (const [index, account] of ordered(store, config).entries()) {
         const state = stateOf(account, store, config, now);
         const marker = state === 'active' ? ' > ' : '   ';
@@ -66,11 +66,13 @@ function status() {
             pad(`${Math.round(thresholdFor(account, config) * 100)}%`, 8) +
             pad(relative(reset), 11) +
             pad(percent(effectiveU7d(account, now), known), 6) +
+            pad(`${Math.round(weeklyThresholdFor(account, config) * 100)}%`, 8) +
             (state === 'active' ? 'ACTIVE' : state));
         if (account.error)
             console.log(`      ! ${account.error.slice(0, 100)}`);
     }
-    console.log(`\ndefault switch ${Math.round(config.switchThreshold * 100)}% · ${tilde(dirname(storePath()))}`);
+    const pacing = config.weeklyPacing ? 'on' : 'off';
+    console.log(`\ndefault switch ${Math.round(config.switchThreshold * 100)}% · weekly ${Math.round(config.weeklyThreshold * 100)}% · pacing ${pacing} · ${tilde(dirname(storePath()))}`);
 }
 async function login() {
     const result = await authorize('max');
@@ -233,6 +235,31 @@ function setThreshold(needle, raw) {
     writeStatus(store, config);
     status();
 }
+/**
+ * Set or clear an account's own weekly threshold.
+ *
+ * Mirrors `setThreshold` exactly, but for the 7d window: `default`/`none`
+ * removes the override so the account follows the global `weeklyThreshold`
+ * again; anything else accepts either `80` or `0.8`.
+ */
+function setWeeklyThreshold(needle, raw) {
+    const store = loadStore();
+    const account = findAccount(store, needle);
+    if (!account)
+        fail(`unknown account: ${needle}`);
+    if (raw === 'default' || raw === 'none') {
+        account.weeklyThreshold = null;
+    }
+    else {
+        const value = normalizeThreshold(raw);
+        if (value === null)
+            fail(`threshold must be between 0 and 100 (got ${raw})`);
+        account.weeklyThreshold = value;
+    }
+    saveStore(store);
+    writeStatus(store, config);
+    status();
+}
 /** Undo every park so the rotation starts clean from account #1. */
 function unpark() {
     const store = loadStore();
@@ -274,6 +301,11 @@ export async function main(argv = process.argv.slice(2)) {
                 fail('usage: oc-anthropic threshold <account> <percent|default>');
             setThreshold(args[0], args[1]);
             break;
+        case 'weekly-threshold':
+            if (args.length < 2)
+                fail('usage: oc-anthropic weekly-threshold <account> <percent|default>');
+            setWeeklyThreshold(args[0], args[1]);
+            break;
         case 'use':
             if (!args[0])
                 fail('usage: oc-anthropic use <account>');
@@ -300,6 +332,8 @@ export async function main(argv = process.argv.slice(2)) {
                 '',
                 '  order <acct>...         set rotation order',
                 '  threshold <acct> <pct>  switch point for one account, or `default`',
+                '  weekly-threshold <acct> <pct>',
+                '                          weekly limit for one account, or `default`',
                 '  label <acct> <name>     rename an account',
                 '',
                 '  use <acct>              force-switch to an account now',

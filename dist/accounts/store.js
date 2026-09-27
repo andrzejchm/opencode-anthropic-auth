@@ -113,6 +113,7 @@ export function migrateFromOpencodeAuth() {
             usage: null,
             profileAt: null,
             threshold: null,
+            weeklyThreshold: null,
             parkedUntil: 0,
             lastUsed: null,
             error: null,

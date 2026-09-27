@@ -79,6 +79,7 @@ export async function addAccount(
     usage: null,
     profileAt: profile ? Date.now() : null,
     threshold: null,
+    weeklyThreshold: null,
     parkedUntil: 0,
     lastUsed: null,
     error: null,

@@ -46,6 +46,11 @@ export type Account = {
    * `switchThreshold`, so accounts only carry a value when deliberately tuned.
    */
   threshold: number | null
+  /**
+   * Per-account 7d weekly threshold (0..1). `null` falls back to the global
+   * `weeklyThreshold`, mirroring how `threshold` overrides `switchThreshold`.
+   */
+  weeklyThreshold: number | null
   /** Epoch ms; account is skipped until then. Set on 429 / manual park. */
   parkedUntil: number
   /** Epoch ms of last successful request. */
@@ -71,6 +76,17 @@ export type Config = {
   accountThresholds: Record<string, number>
   /** Treat an account as unusable at or above this 7d utilization (0..1). */
   weeklyThreshold: number
+  /**
+   * Per-account weekly thresholds keyed by label or id, e.g. `{ "a@b.com": 0.7 }`.
+   * Used when the account itself carries no stored override.
+   */
+  accountWeeklyThresholds: Record<string, number>
+  /**
+   * Spread each account's weekly budget evenly across its 7-day window
+   * instead of allowing it all up front. Off by default: existing users get
+   * today's all-at-once behavior unless they opt in.
+   */
+  weeklyPacing: boolean
   /** Account labels or ids, in rotation order. Unlisted accounts keep their store order. */
   accountOrder: string[]
 }
@@ -79,5 +95,7 @@ export const DEFAULT_CONFIG: Config = {
   switchThreshold: 0.6,
   accountThresholds: {},
   weeklyThreshold: 0.98,
+  accountWeeklyThresholds: {},
+  weeklyPacing: false,
   accountOrder: [],
 }

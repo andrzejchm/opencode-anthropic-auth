@@ -13,6 +13,29 @@ import {
 
 export type Logger = (level: 'info' | 'warn' | 'error', message: string) => void
 
+/**
+ * Read a boolean flag from a plugin option or its environment fallback.
+ *
+ * An explicit `false` option must win over a `true` environment variable, so
+ * this checks `undefined` rather than falsiness — `false` is a real answer,
+ * not "unset". Only `"1"` and `"true"` (case-insensitive) turn an environment
+ * value on; anything else is treated as unset rather than silently enabling
+ * pacing on a typo.
+ */
+function boolean(
+  option: unknown,
+  envValue: string | undefined,
+  fallback: boolean,
+): boolean {
+  if (typeof option === 'boolean') return option
+  if (envValue !== undefined) {
+    const normalized = envValue.trim().toLowerCase()
+    if (normalized === '1' || normalized === 'true') return true
+    if (normalized === '0' || normalized === 'false') return false
+  }
+  return fallback
+}
+
 /** Read plugin options, falling back to env vars and then defaults. */
 export function resolveConfig(options?: Record<string, unknown>): Config {
   const numeric = (value: unknown, fallback: number): number => {
@@ -35,6 +58,12 @@ export function resolveConfig(options?: Record<string, unknown>): Config {
       DEFAULT_CONFIG.weeklyThreshold,
     ),
     accountThresholds: parseThresholds(options?.accountThresholds),
+    accountWeeklyThresholds: parseThresholds(options?.accountWeeklyThresholds),
+    weeklyPacing: boolean(
+      options?.weeklyPacing,
+      process.env.ANTHROPIC_WEEKLY_PACING,
+      DEFAULT_CONFIG.weeklyPacing,
+    ),
     accountOrder: Array.isArray(options?.accountOrder)
       ? (options.accountOrder as unknown[]).filter(
           (e): e is string => typeof e === 'string',

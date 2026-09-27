@@ -41,6 +41,7 @@ export function testAccount(overrides: Partial<Account> = {}): Account {
     // Already looked up, so tests don't trigger a background profile fetch.
     profileAt: Date.now(),
     threshold: null,
+    weeklyThreshold: null,
     parkedUntil: 0,
     lastUsed: null,
     error: null,

@@ -1,6 +1,6 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, } from "./selector.js";
+import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, weeklyThresholdFor, } from "./selector.js";
 import { statusPath } from "./store.js";
 const iso = (ms) => ms ? new Date(ms).toISOString() : null;
 export function buildStatus(store, config, now = Date.now()) {
@@ -12,6 +12,7 @@ export function buildStatus(store, config, now = Date.now()) {
         tier: account.tier,
         state: stateOf(account, store, config, now),
         threshold: thresholdFor(account, config),
+        weeklyThreshold: weeklyThresholdFor(account, config),
         stale: isUsageStale(account, now) || isUsageUnknown(account),
         u5h: round(effectiveU5h(account, now)),
         resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
@@ -23,6 +24,8 @@ export function buildStatus(store, config, now = Date.now()) {
         updatedAt: new Date(now).toISOString(),
         active: store.accounts.find((a) => a.id === store.active)?.label ?? null,
         switchThreshold: config.switchThreshold,
+        weeklyThreshold: config.weeklyThreshold,
+        weeklyPacing: config.weeklyPacing,
         accounts: rows,
     };
 }

@@ -31,9 +31,31 @@ export declare function effectiveU7d(account: Account, now: number): number;
  * than a 5x one.
  */
 export declare function thresholdFor(account: Account, config: Config): number;
+/**
+ * The 7d utilization at which this specific account is treated as exhausted.
+ *
+ * Same precedence as `thresholdFor`: a value stored on the account beats a
+ * `accountWeeklyThresholds` entry in config, which beats the global default.
+ * Plans differ in how much weekly headroom they carry, so letting each
+ * account differ matters here too.
+ */
+export declare function weeklyThresholdFor(account: Account, config: Config): number;
+/**
+ * The 7d utilization an account may reach *right now* under weekly pacing.
+ *
+ * Spreads the account's weekly ceiling evenly across the 7 days of its
+ * window: day 1 allows a seventh of it, day 2 two sevenths, and so on up to
+ * the full ceiling by day 7. This is what stops a whole week's budget being
+ * spent in the first afternoon.
+ *
+ * Falls back to the unpaced ceiling when there is no usage snapshot yet — an
+ * account that has never served a request has no window to pace against, and
+ * treating that as "day 1" would block it before it starts.
+ */
+export declare function pacedWeeklyCeiling(account: Account, config: Config, now: number): number;
 /** Weekly limit exhausted — the account cannot serve anything until it resets. */
 export declare function isBlocked(account: Account, config: Config, now: number): boolean;
-/** Under its threshold, not parked, not weekly-blocked. */
+/** Under its threshold, not parked, not weekly-blocked, on pace. */
 export declare function isEligible(account: Account, config: Config, now: number): boolean;
 /** Apply the configured rotation order; unlisted accounts keep store order. */
 export declare function ordered(store: Store, config: Config): Account[];

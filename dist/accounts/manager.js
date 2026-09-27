@@ -4,6 +4,27 @@ import { writeStatus } from "./status.js";
 import { loadStore, migrateFromOpencodeAuth, updateStore } from "./store.js";
 import { DEFAULT_CONFIG } from "./types.js";
 import { fetchProfile, isLimitResponse, parseUsageHeaders, probeUsage, resetFromResponse, } from "./usage.js";
+/**
+ * Read a boolean flag from a plugin option or its environment fallback.
+ *
+ * An explicit `false` option must win over a `true` environment variable, so
+ * this checks `undefined` rather than falsiness — `false` is a real answer,
+ * not "unset". Only `"1"` and `"true"` (case-insensitive) turn an environment
+ * value on; anything else is treated as unset rather than silently enabling
+ * pacing on a typo.
+ */
+function boolean(option, envValue, fallback) {
+    if (typeof option === 'boolean')
+        return option;
+    if (envValue !== undefined) {
+        const normalized = envValue.trim().toLowerCase();
+        if (normalized === '1' || normalized === 'true')
+            return true;
+        if (normalized === '0' || normalized === 'false')
+            return false;
+    }
+    return fallback;
+}
 /** Read plugin options, falling back to env vars and then defaults. */
 export function resolveConfig(options) {
     const numeric = (value, fallback) => {
@@ -19,6 +40,8 @@ export function resolveConfig(options) {
         switchThreshold: numeric(options?.switchThreshold ?? process.env.ANTHROPIC_SWITCH_THRESHOLD, DEFAULT_CONFIG.switchThreshold),
         weeklyThreshold: numeric(options?.weeklyThreshold ?? process.env.ANTHROPIC_WEEKLY_THRESHOLD, DEFAULT_CONFIG.weeklyThreshold),
         accountThresholds: parseThresholds(options?.accountThresholds),
+        accountWeeklyThresholds: parseThresholds(options?.accountWeeklyThresholds),
+        weeklyPacing: boolean(options?.weeklyPacing, process.env.ANTHROPIC_WEEKLY_PACING, DEFAULT_CONFIG.weeklyPacing),
         accountOrder: Array.isArray(options?.accountOrder)
             ? options.accountOrder.filter((e) => typeof e === 'string')
             : DEFAULT_CONFIG.accountOrder,

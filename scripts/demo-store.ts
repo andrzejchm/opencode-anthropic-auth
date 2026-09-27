@@ -25,6 +25,7 @@ function account(
     usage: null,
     profileAt: now,
     threshold: null,
+    weeklyThreshold: null,
     parkedUntil: 0,
     lastUsed: now,
     error: null,

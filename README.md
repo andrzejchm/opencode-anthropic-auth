@@ -105,9 +105,10 @@ oc-anthropic refresh               # force a live re-read of every account
 oc-anthropic login                 # add another subscription
 oc-anthropic remove <acct>         # drop an account
 
-oc-anthropic order <a> <b> <c>     # set rotation order
-oc-anthropic threshold <acct> 80   # switch point for one account (or `default`)
-oc-anthropic label <acct> <name>   # rename
+oc-anthropic order <a> <b> <c>          # set rotation order
+oc-anthropic threshold <acct> 80        # switch point for one account (or `default`)
+oc-anthropic weekly-threshold <acct> 80 # weekly limit for one account (or `default`)
+oc-anthropic label <acct> <name>        # rename
 
 oc-anthropic use <acct>            # force-switch now, ignoring thresholds
 oc-anthropic unpark                # clear all parks, restart from #1
@@ -133,7 +134,9 @@ Everything is optional. The CLI writes to the store and always wins over config,
       "switchThreshold": 0.6,
       "weeklyThreshold": 0.98,
       "accountOrder": ["work@example.com", "side@example.com"],
-      "accountThresholds": { "work@example.com": 80 }
+      "accountThresholds": { "work@example.com": 80 },
+      "accountWeeklyThresholds": { "work@example.com": 70 },
+      "weeklyPacing": true
     }]
   ]
 }
@@ -150,11 +153,21 @@ Everything is optional. The CLI writes to the store and always wins over config,
 | `switchThreshold` | `0.6` | 5-hour utilization at which an account hands over |
 | `weeklyThreshold` | `0.98` | 7-day utilization at which an account is skipped entirely |
 | `accountOrder` | login order | rotation order, by label or id |
-| `accountThresholds` | `{}` | per-account overrides, keyed by label or id |
+| `accountThresholds` | `{}` | per-account 5h overrides, keyed by label or id |
+| `accountWeeklyThresholds` | `{}` | per-account weekly overrides, keyed by label or id |
+| `weeklyPacing` | `false` | spread each account's weekly budget across its 7-day window instead of allowing it all up front |
 
-Thresholds accept `80` or `0.8` — both mean 80%.
+Thresholds accept `80` or `0.8` — both mean 80%. Per-account weekly overrides work the same way as the per-account 5h ones: `oc-anthropic weekly-threshold <acct> 80` sets one, `oc-anthropic weekly-threshold <acct> default` clears it back to the global `weeklyThreshold` (or the `accountWeeklyThresholds` entry, if one applies).
 
-Environment overrides: `ANTHROPIC_SWITCH_THRESHOLD`, `ANTHROPIC_WEEKLY_THRESHOLD`. Upstream's `ANTHROPIC_BASE_URL`, `ANTHROPIC_INSECURE` and `ANTHROPIC_CLAUDE_CODE_VERSION` still work.
+### Weekly pacing
+
+With `weeklyPacing` off (the default), an account can spend its entire weekly budget on day one and then sit unusable for the rest of the week. Turning it on spreads that budget evenly across the 7-day window instead: day 1 allows a seventh of the weekly ceiling, day 2 two sevenths, and so on up to the full ceiling by day 7.
+
+An account that is ahead of its own pace hands over to the next one — same as crossing the 5h `switchThreshold` — rather than being blocked outright. If every account is ahead of pace, the last one keeps serving requests as a fallback rather than failing early, exactly like the existing 5h last-resort behavior. `oc-anthropic status` shows a paced-out account as `parked`.
+
+Enable it with `"weeklyPacing": true` in the plugin options, or `ANTHROPIC_WEEKLY_PACING=true` (also accepts `1`).
+
+Environment overrides: `ANTHROPIC_SWITCH_THRESHOLD`, `ANTHROPIC_WEEKLY_THRESHOLD`, `ANTHROPIC_WEEKLY_PACING`. Upstream's `ANTHROPIC_BASE_URL`, `ANTHROPIC_INSECURE` and `ANTHROPIC_CLAUDE_CODE_VERSION` still work.
 
 ---
 

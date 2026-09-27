@@ -57,15 +57,65 @@ export function thresholdFor(account, config) {
         config.accountThresholds[account.id] ??
         config.switchThreshold);
 }
+/**
+ * The 7d utilization at which this specific account is treated as exhausted.
+ *
+ * Same precedence as `thresholdFor`: a value stored on the account beats a
+ * `accountWeeklyThresholds` entry in config, which beats the global default.
+ * Plans differ in how much weekly headroom they carry, so letting each
+ * account differ matters here too.
+ */
+export function weeklyThresholdFor(account, config) {
+    if (account.weeklyThreshold !== null &&
+        account.weeklyThreshold !== undefined) {
+        return account.weeklyThreshold;
+    }
+    return (config.accountWeeklyThresholds[account.label] ??
+        config.accountWeeklyThresholds[account.id] ??
+        config.weeklyThreshold);
+}
+/** One 7-day window, in milliseconds. */
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * The 7d utilization an account may reach *right now* under weekly pacing.
+ *
+ * Spreads the account's weekly ceiling evenly across the 7 days of its
+ * window: day 1 allows a seventh of it, day 2 two sevenths, and so on up to
+ * the full ceiling by day 7. This is what stops a whole week's budget being
+ * spent in the first afternoon.
+ *
+ * Falls back to the unpaced ceiling when there is no usage snapshot yet — an
+ * account that has never served a request has no window to pace against, and
+ * treating that as "day 1" would block it before it starts.
+ */
+export function pacedWeeklyCeiling(account, config, now) {
+    const ceiling = weeklyThresholdFor(account, config);
+    const reset7d = account.usage?.reset7d;
+    if (!reset7d)
+        return ceiling;
+    const remaining = reset7d * 1000 - now;
+    const elapsed = Math.min(WEEK_MS, Math.max(0, WEEK_MS - remaining));
+    const dayIndex = Math.min(7, Math.floor(elapsed / DAY_MS) + 1);
+    return ceiling * (dayIndex / 7);
+}
 /** Weekly limit exhausted — the account cannot serve anything until it resets. */
 export function isBlocked(account, config, now) {
-    return effectiveU7d(account, now) >= config.weeklyThreshold;
+    return effectiveU7d(account, now) >= weeklyThresholdFor(account, config);
 }
-/** Under its threshold, not parked, not weekly-blocked. */
+/** Ahead of its prorated slice of the week — hand over, but don't block. */
+function isAheadOfPace(account, config, now) {
+    if (!config.weeklyPacing)
+        return false;
+    return effectiveU7d(account, now) >= pacedWeeklyCeiling(account, config, now);
+}
+/** Under its threshold, not parked, not weekly-blocked, on pace. */
 export function isEligible(account, config, now) {
     if (now < account.parkedUntil)
         return false;
     if (isBlocked(account, config, now))
+        return false;
+    if (isAheadOfPace(account, config, now))
         return false;
     return effectiveU5h(account, now) < thresholdFor(account, config);
 }
@@ -118,6 +168,8 @@ export function stateOf(account, store, config, now = Date.now()) {
     if (now < account.parkedUntil)
         return 'parked';
     if (effectiveU5h(account, now) >= thresholdFor(account, config))
+        return 'parked';
+    if (isAheadOfPace(account, config, now))
         return 'parked';
     if (account.error)
         return 'error';

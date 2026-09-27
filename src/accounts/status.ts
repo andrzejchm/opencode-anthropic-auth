@@ -8,6 +8,7 @@ import {
   ordered,
   stateOf,
   thresholdFor,
+  weeklyThresholdFor,
 } from './selector.ts'
 import { statusPath } from './store.ts'
 import type { Config, Store } from './types.ts'
@@ -21,6 +22,8 @@ export type StatusRow = {
   state: string
   /** Effective 5h switch threshold for this account (0..1). */
   threshold: number
+  /** Effective 7d weekly threshold for this account (0..1). */
+  weeklyThreshold: number
   /**
    * True when the reading predates the window it describes, so `u5h` is an
    * optimistic guess rather than an observation.
@@ -37,6 +40,8 @@ export type Status = {
   updatedAt: string
   active: string | null
   switchThreshold: number
+  weeklyThreshold: number
+  weeklyPacing: boolean
   accounts: StatusRow[]
 }
 
@@ -56,6 +61,7 @@ export function buildStatus(
     tier: account.tier,
     state: stateOf(account, store, config, now),
     threshold: thresholdFor(account, config),
+    weeklyThreshold: weeklyThresholdFor(account, config),
     stale: isUsageStale(account, now) || isUsageUnknown(account),
     u5h: round(effectiveU5h(account, now)),
     resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
@@ -68,6 +74,8 @@ export function buildStatus(
     updatedAt: new Date(now).toISOString(),
     active: store.accounts.find((a) => a.id === store.active)?.label ?? null,
     switchThreshold: config.switchThreshold,
+    weeklyThreshold: config.weeklyThreshold,
+    weeklyPacing: config.weeklyPacing,
     accounts: rows,
   }
 }

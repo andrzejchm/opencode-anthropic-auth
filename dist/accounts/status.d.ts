@@ -8,6 +8,8 @@ export type StatusRow = {
     state: string;
     /** Effective 5h switch threshold for this account (0..1). */
     threshold: number;
+    /** Effective 7d weekly threshold for this account (0..1). */
+    weeklyThreshold: number;
     /**
      * True when the reading predates the window it describes, so `u5h` is an
      * optimistic guess rather than an observation.
@@ -23,6 +25,8 @@ export type Status = {
     updatedAt: string;
     active: string | null;
     switchThreshold: number;
+    weeklyThreshold: number;
+    weeklyPacing: boolean;
     accounts: StatusRow[];
 };
 export declare function buildStatus(store: Store, config: Config, now?: number): Status;

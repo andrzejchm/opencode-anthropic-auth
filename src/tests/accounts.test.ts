@@ -233,12 +233,14 @@ describe('resolveConfig', () => {
       weeklyThreshold: 0.9,
       accountOrder: ['b', 'a'],
       accountThresholds: { a: 80, b: 0.5 },
+      accountWeeklyThresholds: { a: 70, b: 0.6 },
     })
 
     expect(config.switchThreshold).toBe(0.8)
     expect(config.accountOrder).toEqual(['b', 'a'])
     // Percentages and fractions are both accepted.
     expect(config.accountThresholds).toEqual({ a: 0.8, b: 0.5 })
+    expect(config.accountWeeklyThresholds).toEqual({ a: 0.7, b: 0.6 })
   })
 
   test('ignores an out-of-range threshold instead of disabling rotation', () => {
@@ -254,6 +256,46 @@ describe('resolveConfig', () => {
     expect(
       resolveConfig({ accountOrder: ['a', 7, null] }).accountOrder,
     ).toEqual(['a'])
+  })
+
+  describe('weeklyPacing', () => {
+    const ENV_VAR = 'ANTHROPIC_WEEKLY_PACING'
+    const original = process.env[ENV_VAR]
+
+    afterEach(() => {
+      if (original === undefined) delete process.env[ENV_VAR]
+      else process.env[ENV_VAR] = original
+    })
+
+    test('defaults to off', () => {
+      delete process.env[ENV_VAR]
+      expect(resolveConfig().weeklyPacing).toBe(false)
+    })
+
+    test('turns on from a plugin option', () => {
+      delete process.env[ENV_VAR]
+      expect(resolveConfig({ weeklyPacing: true }).weeklyPacing).toBe(true)
+    })
+
+    test('turns on from the environment when no option is set', () => {
+      process.env[ENV_VAR] = 'true'
+      expect(resolveConfig().weeklyPacing).toBe(true)
+    })
+
+    test('accepts "1" from the environment', () => {
+      process.env[ENV_VAR] = '1'
+      expect(resolveConfig().weeklyPacing).toBe(true)
+    })
+
+    test('a plugin option overrides the environment', () => {
+      process.env[ENV_VAR] = 'true'
+      expect(resolveConfig({ weeklyPacing: false }).weeklyPacing).toBe(false)
+    })
+
+    test('rejects an unrecognised environment value', () => {
+      process.env[ENV_VAR] = 'yes'
+      expect(resolveConfig().weeklyPacing).toBe(false)
+    })
   })
 })
 

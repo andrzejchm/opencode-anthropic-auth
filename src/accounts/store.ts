@@ -136,6 +136,7 @@ export function migrateFromOpencodeAuth(): Account | null {
       usage: null,
       profileAt: null,
       threshold: null,
+      weeklyThreshold: null,
       parkedUntil: 0,
       lastUsed: null,
       error: null,
