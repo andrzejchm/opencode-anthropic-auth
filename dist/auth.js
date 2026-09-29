@@ -77,6 +77,39 @@ export async function authorize(mode) {
         verifier: pkce.verifier,
     };
 }
+/**
+ * Exchange a refresh token for a new access/refresh token pair.
+ *
+ * Used only to satisfy OpenCode v2's own single-credential bookkeeping (the
+ * `refresh` callback registered on the OAuth method). The multi-account
+ * rotation path has its own refresh with retries and cross-process locking —
+ * see `accounts/refresh.ts` — and does not call this function.
+ */
+export async function refreshToken(refreshTokenValue) {
+    const result = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/plain, */*',
+            'User-Agent': 'axios/1.13.6',
+        },
+        body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshTokenValue,
+            client_id: CLIENT_ID,
+        }),
+    });
+    if (!result.ok) {
+        return { type: 'failed', status: result.status };
+    }
+    const json = (await result.json());
+    return {
+        type: 'success',
+        refresh: json.refresh_token,
+        access: json.access_token,
+        expires: Date.now() + json.expires_in * 1000,
+    };
+}
 export async function exchange(input, verifier, redirectUri, expectedState) {
     const callback = parseCallbackInput(input);
     if (!callback) {

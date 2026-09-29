@@ -2,7 +2,7 @@ import { buildBillingHeaderValue } from "./cch.js";
 import { CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_IDENTITY, CLAUDE_CODE_VERSION, formatUserAgent, OPENCODE_IDENTITY_PREFIX, PARAGRAPH_REMOVAL_ANCHORS, REQUIRED_BETAS, TEXT_REPLACEMENTS, TOOL_PREFIX, } from "./constants.js";
 // Bound an incomplete SSE line so malformed streams cannot grow memory forever.
 export const MAX_SSE_LINE_BYTES = 5 * 1024 * 1024;
-function headersAfterBodyTransform(source) {
+export function headersAfterBodyTransform(source) {
     const headers = new Headers(source);
     for (const name of [
         'content-digest',

@@ -14,7 +14,7 @@ import {
 // Bound an incomplete SSE line so malformed streams cannot grow memory forever.
 export const MAX_SSE_LINE_BYTES = 5 * 1024 * 1024
 
-function headersAfterBodyTransform(source: Headers): Headers {
+export function headersAfterBodyTransform(source: Headers): Headers {
   const headers = new Headers(source)
   for (const name of [
     'content-digest',

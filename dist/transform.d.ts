@@ -1,4 +1,5 @@
 export declare const MAX_SSE_LINE_BYTES: number;
+export declare function headersAfterBodyTransform(source: Headers): Headers;
 export declare const MAX_JSON_TOOL_NAME_BYTES = 1024;
 export type FetchInput = string | URL | Request;
 /**

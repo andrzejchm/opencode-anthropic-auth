@@ -50,6 +50,42 @@ export type ClaudeCodeVersionResolution =
   | { type: 'outdated'; version: string; warning: string }
   | { type: 'invalid'; error: string }
 
+/** Is `candidate` a syntactically valid Claude Code release string? */
+export function isValidClaudeCodeVersion(candidate: string): boolean {
+  return VERSION_PATTERN.test(candidate)
+}
+
+/**
+ * Compare two validated Claude Code releases.
+ *
+ * Same numeric, `BigInt`-based comparison as `isOlderVersion`, exposed for
+ * callers (the OpenCode v2 adapter's version-gate recovery) that need the
+ * three-way result rather than a boolean. Returns `undefined` for input that
+ * doesn't match `VERSION_PATTERN`.
+ */
+export function compareClaudeCodeVersions(
+  candidate: string,
+  baseline: string,
+): -1 | 0 | 1 | undefined {
+  if (
+    !isValidClaudeCodeVersion(candidate) ||
+    !isValidClaudeCodeVersion(baseline)
+  ) {
+    return undefined
+  }
+  const [major = 0n, minor = 0n, patch = 0n] = candidate
+    .split('.')
+    .map((part) => BigInt(part))
+  const [baseMajor = 0n, baseMinor = 0n, basePatch = 0n] = baseline
+    .split('.')
+    .map((part) => BigInt(part))
+
+  if (major !== baseMajor) return major < baseMajor ? -1 : 1
+  if (minor !== baseMinor) return minor < baseMinor ? -1 : 1
+  if (patch !== basePatch) return patch < basePatch ? -1 : 1
+  return 0
+}
+
 /**
  * Resolve the Claude Code version to report to Anthropic.
  *
