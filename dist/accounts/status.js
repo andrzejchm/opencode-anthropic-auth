@@ -1,6 +1,6 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, stateOf, thresholdFor, weeklyThresholdFor, } from "./selector.js";
+import { effectiveU5h, effectiveU7d, isUsageStale, isUsageUnknown, ordered, paceTarget, pacingFor, stateOf, thresholdFor, weeklyThresholdFor, } from "./selector.js";
 import { statusPath } from "./store.js";
 const iso = (ms) => ms ? new Date(ms).toISOString() : null;
 export function buildStatus(store, config, now = Date.now()) {
@@ -17,6 +17,9 @@ export function buildStatus(store, config, now = Date.now()) {
         u5h: round(effectiveU5h(account, now)),
         resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
         u7d: round(effectiveU7d(account, now)),
+        resets7d: account.usage?.reset7d ? iso(account.usage.reset7d * 1000) : null,
+        paceTarget: roundOrNull(paceTarget(account, config, now)),
+        pacing: pacingFor(account, config),
         lastUsed: iso(account.lastUsed),
         error: account.error,
     }));
@@ -31,6 +34,9 @@ export function buildStatus(store, config, now = Date.now()) {
 }
 function round(value) {
     return Math.round(value * 1000) / 1000;
+}
+function roundOrNull(value) {
+    return value === null ? null : round(value);
 }
 /**
  * Mirror the store to a secret-free file.

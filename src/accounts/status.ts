@@ -6,6 +6,8 @@ import {
   isUsageStale,
   isUsageUnknown,
   ordered,
+  paceTarget,
+  pacingFor,
   stateOf,
   thresholdFor,
   weeklyThresholdFor,
@@ -32,6 +34,12 @@ export type StatusRow = {
   u5h: number
   resets5h: string | null
   u7d: number
+  /** When the 7d window rolls over, or null if unknown. */
+  resets7d: string | null
+  /** 7d utilization the account should have reached by now (0..1), or null if unknown. */
+  paceTarget: number | null
+  /** Whether weekly pacing is enforced for this account (own setting, else global). */
+  pacing: boolean
   lastUsed: string | null
   error: string | null
 }
@@ -66,6 +74,9 @@ export function buildStatus(
     u5h: round(effectiveU5h(account, now)),
     resets5h: account.usage?.reset5h ? iso(account.usage.reset5h * 1000) : null,
     u7d: round(effectiveU7d(account, now)),
+    resets7d: account.usage?.reset7d ? iso(account.usage.reset7d * 1000) : null,
+    paceTarget: roundOrNull(paceTarget(account, config, now)),
+    pacing: pacingFor(account, config),
     lastUsed: iso(account.lastUsed),
     error: account.error,
   }))
@@ -82,6 +93,10 @@ export function buildStatus(
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000
+}
+
+function roundOrNull(value: number | null): number | null {
+  return value === null ? null : round(value)
 }
 
 /**

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import {
   effectiveU5h,
   pacedWeeklyCeiling,
+  paceTarget,
+  pacingFor,
   select,
   stateOf,
   weeklyThresholdFor,
@@ -280,6 +282,78 @@ describe('select', () => {
       expect(select(s, paced, NOW)?.account.label).toBe('b')
       expect(stateOf(a, s, paced, NOW)).toBe('blocked')
     })
+  })
+})
+
+describe('per-account pacing', () => {
+  const week = (u7d: number): Partial<Account> => ({
+    usage: {
+      u5h: 0.1,
+      reset5h: Math.floor((NOW + 2 * HOUR) / 1000),
+      u7d,
+      // A full 7 days out: moments into the window, so the allowance is 1/7.
+      reset7d: Math.floor((NOW + 7 * DAY) / 1000),
+      at: NOW,
+    },
+  })
+
+  test('follows the global setting when the account has no override', () => {
+    expect(pacingFor(account('a', 0), config)).toBe(false)
+    expect(pacingFor(account('a', 0), { ...config, weeklyPacing: true })).toBe(
+      true,
+    )
+  })
+
+  test('an account can turn pacing on while the global setting is off', () => {
+    const a = account('a', 0.1, { ...week(0.3), pacing: true })
+    const s = store(a, account('b', 0.2))
+    expect(pacingFor(a, config)).toBe(true)
+    expect(select(s, config, NOW)?.account.label).toBe('b')
+  })
+
+  test('an account can turn pacing off while the global setting is on', () => {
+    const paced = { ...config, weeklyPacing: true }
+    const a = account('a', 0.1, { ...week(0.3), pacing: false })
+    const s = store(a, account('b', 0.2))
+    expect(pacingFor(a, paced)).toBe(false)
+    expect(select(s, paced, NOW)?.account.label).toBe('a')
+  })
+
+  test('null clears the override', () => {
+    const paced = { ...config, weeklyPacing: true }
+    expect(pacingFor(account('a', 0, { pacing: null }), paced)).toBe(true)
+  })
+})
+
+describe('paceTarget', () => {
+  test('is the day-stepped slice of the weekly ceiling', () => {
+    const a = account('a', 0, {
+      usage: {
+        u5h: 0,
+        reset5h: 0,
+        u7d: 0,
+        reset7d: Math.floor((NOW + 3.5 * DAY) / 1000),
+        at: NOW,
+      },
+    })
+    expect(paceTarget(a, config, NOW)).toBeCloseTo(0.98 * (4 / 7), 6)
+  })
+
+  test('is unknown with no usage snapshot', () => {
+    expect(paceTarget(account('a', 0, { usage: null }), config, NOW)).toBeNull()
+  })
+
+  test('is unknown once the 7d window has rolled over', () => {
+    const a = account('a', 0, {
+      usage: {
+        u5h: 0,
+        reset5h: 0,
+        u7d: 0.5,
+        reset7d: Math.floor((NOW - HOUR) / 1000),
+        at: NOW,
+      },
+    })
+    expect(paceTarget(a, config, NOW)).toBeNull()
   })
 })
 

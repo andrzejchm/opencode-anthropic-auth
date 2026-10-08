@@ -19,15 +19,21 @@ You log into 2+ Claude subscriptions. The plugin uses the first one until it rea
 
 ```
 $ oc-anthropic status
-   #  ACCOUNT                 ORG             TIER      5H    SWITCH  RESETS IN  7D    STATE
-   1  work@example.com        Acme            max_5x    83%   80%     2h 18m     41%   parked
- > 2  side@example.com        Side Project    max_5x    12%   60%     4h 6m      52%   ACTIVE
-   3  personal@example.com    —               max_20x    2%   90%     4h 48m     14%   idle
+   #  ACCOUNT   5H       7D       PACE  RESET 5H/7D    PACING  STATE    TIER     ORG
+   1  work      83/80%   41/70%   42%   2h18m/3d12h    on      parked   max_5x   Acme
+ > 2  side      12/60%   52/98%   56%   4h6m/3d12h     on      ACTIVE   max_5x   Side Project
+   3  personal  2/90%    14/98%   56%   4h48m/3d12h    off     idle     max_20x  —
 
-default switch 60% · ~/.local/share/opencode
+default switch 60% · weekly 98% · pacing off · ~/.local/share/opencode
 ```
 
 Account 1 is past its 80% threshold, so it handed over and is waiting for its window to reset. Account 2 is serving requests.
+
+`5H` and `7D` show usage/limit, such as `83/80%`. `RESET 5H/7D` shows how long remains until each usage window resets, with weekly countdowns formatted as days and hours (e.g. `2h18m/3d12h`). Unknown or stale readings show `—` for the corresponding countdown.
+
+Use `oc-anthropic label work@example.com work` to give an account a short name. The account column fits the longest label, capped at 32 characters including spacing.
+
+`7D` is how much of the weekly quota an account has used; `PACE` is how much it should have used by now if the weekly ceiling were spread evenly over the week. Account 2 is at 52% against a pace of 56%, so it is on track.
 
 Usage is read from the `anthropic-ratelimit-unified-*` headers that every `/v1/messages` response already carries, so tracking costs no extra requests and adds no latency.
 
@@ -108,6 +114,7 @@ oc-anthropic remove <acct>         # drop an account
 oc-anthropic order <a> <b> <c>          # set rotation order
 oc-anthropic threshold <acct> 80        # switch point for one account (or `default`)
 oc-anthropic weekly-threshold <acct> 80 # weekly limit for one account (or `default`)
+oc-anthropic pacing <acct> on           # weekly pacing for one account (on, off or `default`)
 oc-anthropic label <acct> <name>        # rename
 
 oc-anthropic use <acct>            # force-switch now, ignoring thresholds
@@ -166,6 +173,12 @@ With `weeklyPacing` off (the default), an account can spend its entire weekly bu
 An account that is ahead of its own pace hands over to the next one — same as crossing the 5h `switchThreshold` — rather than being blocked outright. If every account is ahead of pace, the last one keeps serving requests as a fallback rather than failing early, exactly like the existing 5h last-resort behavior. `oc-anthropic status` shows a paced-out account as `parked`.
 
 Enable it with `"weeklyPacing": true` in the plugin options, or `ANTHROPIC_WEEKLY_PACING=true` (also accepts `1`).
+
+To pace only some accounts, use the CLI: `oc-anthropic pacing <acct> on` or `off` pins that account regardless of the global setting, and `oc-anthropic pacing <acct> default` clears it so the account follows `weeklyPacing` again. The `PACING` column in `status` shows what is in effect per account.
+
+The `PACE` column shows the usage an account should have reached by now (`7D` is what it has actually used), whether or not pacing is enforced for it. It is `?` when the reading is missing or the 7-day window has rolled over. The same numbers are in `anthropic-status.json` as `u7d`, `paceTarget` and `pacing`.
+
+The CLI only sees the global `weeklyPacing` from the environment, not from `opencode.json`. So the footer's `pacing on/off` can disagree with what the plugin actually does, and an account with no override may show the wrong `PACING` value. A per-account `oc-anthropic pacing` setting is stored with the account, so both always agree.
 
 Environment overrides: `ANTHROPIC_SWITCH_THRESHOLD`, `ANTHROPIC_WEEKLY_THRESHOLD`, `ANTHROPIC_WEEKLY_PACING`. Upstream's `ANTHROPIC_BASE_URL`, `ANTHROPIC_INSECURE` and `ANTHROPIC_CLAUDE_CODE_VERSION` still work.
 

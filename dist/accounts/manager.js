@@ -75,6 +75,15 @@ export function normalizeThreshold(value) {
         return null;
     return fraction;
 }
+/** `on`/`off` (also true/false, 1/0) for a CLI argument. Null for anything else. */
+export function parsePacing(value) {
+    const normalized = value.trim().toLowerCase();
+    if (['on', 'true', '1', 'yes'].includes(normalized))
+        return true;
+    if (['off', 'false', '0', 'no'].includes(normalized))
+        return false;
+    return null;
+}
 /** Don't re-probe the same account more often than this. */
 const PROBE_COOLDOWN_MS = 60_000;
 export function createManager(config, log) {

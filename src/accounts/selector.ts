@@ -125,9 +125,41 @@ export function isBlocked(
   return effectiveU7d(account, now) >= weeklyThresholdFor(account, config)
 }
 
+/**
+ * Is weekly pacing enforced for this account?
+ *
+ * A value stored on the account (set via `oc-anthropic pacing`) beats the
+ * global `weeklyPacing`. That lets one account be paced while another burns
+ * through its week freely, e.g. a spare you only want to drain.
+ */
+export function pacingFor(account: Account, config: Config): boolean {
+  if (account.pacing !== null && account.pacing !== undefined) {
+    return account.pacing
+  }
+  return config.weeklyPacing
+}
+
+/**
+ * The 7d utilization this account should have reached by now, or `null` when
+ * that cannot be known.
+ *
+ * Unlike `pacedWeeklyCeiling` this refuses to guess: with no snapshot, or one
+ * whose 7d window has already rolled over, there is no window to measure
+ * against, and echoing the full ceiling would read as "you may use it all".
+ */
+export function paceTarget(
+  account: Account,
+  config: Config,
+  now: number,
+): number | null {
+  const reset7d = account.usage?.reset7d
+  if (!reset7d || now >= reset7d * 1000) return null
+  return pacedWeeklyCeiling(account, config, now)
+}
+
 /** Ahead of its prorated slice of the week — hand over, but don't block. */
 function isAheadOfPace(account: Account, config: Config, now: number): boolean {
-  if (!config.weeklyPacing) return false
+  if (!pacingFor(account, config)) return false
   return effectiveU7d(account, now) >= pacedWeeklyCeiling(account, config, now)
 }
 

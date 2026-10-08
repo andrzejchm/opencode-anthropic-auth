@@ -5,6 +5,7 @@ import { addAccount } from './accounts/login.ts'
 import {
   labelAccount,
   normalizeThreshold,
+  parsePacing,
   resolveConfig,
 } from './accounts/manager.ts'
 import { needsRefresh, refreshAccount } from './accounts/refresh.ts'
@@ -14,6 +15,8 @@ import {
   isUsageStale,
   isUsageUnknown,
   ordered,
+  paceTarget,
+  pacingFor,
   stateOf,
   thresholdFor,
   weeklyThresholdFor,
@@ -27,6 +30,7 @@ import {
   storePath,
   updateStore,
 } from './accounts/store.ts'
+import type { Account } from './accounts/types.ts'
 import { probeUsage } from './accounts/usage.ts'
 import { authorize, exchange } from './auth.ts'
 
@@ -43,18 +47,8 @@ function relative(ms: number | null): string {
   if (delta <= 0) return 'now'
   const hours = Math.floor(delta / 3_600_000)
   const minutes = Math.round((delta % 3_600_000) / 60_000)
+  if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`
-}
-
-/**
- * Render a utilization we may not actually know.
- *
- * An expired or missing reading is shown as `?` rather than 0%: reporting a
- * confident 0 for an account we haven't heard from is how a exhausted
- * subscription ends up looking idle.
- */
-function percent(value: number, known: boolean): string {
-  return known ? `${Math.round(value * 100)}%` : '?'
 }
 
 /** Abbreviate the home directory, so output is shorter and carries no username. */
@@ -65,7 +59,7 @@ function tilde(path: string): string {
 
 function pad(value: string, width: number): string {
   return value.length > width
-    ? `${value.slice(0, width - 1)}…`
+    ? `${value.slice(0, width - 2)}… `
     : value.padEnd(width)
 }
 
@@ -77,26 +71,52 @@ function status(): void {
   }
 
   const now = Date.now()
-  console.log(
-    `   ${pad('#', 3)}${pad('ACCOUNT', 32)}${pad('ORG', 14)}${pad('TIER', 9)}${pad('5H', 6)}${pad('SWITCH', 8)}${pad('RESETS IN', 11)}${pad('7D', 6)}${pad('WEEKLY', 8)}STATE`,
+  const accounts = ordered(store, config)
+  const accountWidth = Math.min(
+    32,
+    Math.max(
+      'ACCOUNT'.length,
+      ...accounts.map((account) => account.label.length),
+    ) + 2,
   )
-  for (const [index, account] of ordered(store, config).entries()) {
+  console.log(
+    `   ${pad('#', 3)}${pad('ACCOUNT', accountWidth)}${pad('5H', 9)}${pad('7D', 9)}${pad('PACE', 6)}${pad('RESET 5H/7D', 15)}${pad('PACING', 8)}${pad('STATE', 9)}${pad('TIER', 9)}ORG`,
+  )
+  for (const [index, account] of accounts.entries()) {
     const state = stateOf(account, store, config, now)
     const marker = state === 'active' ? ' > ' : '   '
     const known = !isUsageStale(account, now) && !isUsageUnknown(account)
     const reset = known && account.usage ? account.usage.reset5h * 1000 : null
+    const reset7d = known && account.usage ? account.usage.reset7d * 1000 : null
     console.log(
       marker +
         pad(String(index + 1), 3) +
-        pad(account.label, 32) +
-        pad(account.org ?? '—', 14) +
+        pad(account.label, accountWidth) +
+        pad(
+          usageLimit(
+            effectiveU5h(account, now),
+            thresholdFor(account, config),
+            known,
+          ),
+          9,
+        ) +
+        pad(
+          usageLimit(
+            effectiveU7d(account, now),
+            weeklyThresholdFor(account, config),
+            known,
+          ),
+          9,
+        ) +
+        pad(paceCell(account, now), 6) +
+        pad(
+          `${relative(reset).replaceAll(' ', '')}/${relative(reset7d).replaceAll(' ', '')}`,
+          15,
+        ) +
+        pad(pacingFor(account, config) ? 'on' : 'off', 8) +
+        pad(state === 'active' ? 'ACTIVE' : state, 9) +
         pad(account.tier ?? '—', 9) +
-        pad(percent(effectiveU5h(account, now), known), 6) +
-        pad(`${Math.round(thresholdFor(account, config) * 100)}%`, 8) +
-        pad(relative(reset), 11) +
-        pad(percent(effectiveU7d(account, now), known), 6) +
-        pad(`${Math.round(weeklyThresholdFor(account, config) * 100)}%`, 8) +
-        (state === 'active' ? 'ACTIVE' : state),
+        (account.org ?? '—'),
     )
     if (account.error) console.log(`      ! ${account.error.slice(0, 100)}`)
   }
@@ -104,6 +124,27 @@ function status(): void {
   console.log(
     `\ndefault switch ${Math.round(config.switchThreshold * 100)}% · weekly ${Math.round(config.weeklyThreshold * 100)}% · pacing ${pacing} · ${tilde(dirname(storePath()))}`,
   )
+  console.log(
+    "Usage: used/limit · RESET: 5h/7d remaining · PACE: today's weekly allowance (enforced when PACING is on)",
+  )
+}
+
+function usageLimit(value: number, limit: number, known: boolean): string {
+  const used = known ? String(Math.round(value * 100)) : '?'
+  return `${used}/${Math.round(limit * 100)}%`
+}
+
+/**
+ * The PACE column: where 7D usage should be at this point in the week.
+ *
+ * Shown whether or not pacing is enforced, so you can see how far ahead or
+ * behind an account is before deciding to turn it on. `?` when the reading is
+ * missing or the 7d window it describes has already rolled over.
+ */
+function paceCell(account: Account, now: number): string {
+  if (isUsageStale(account, now) || isUsageUnknown(account)) return '?'
+  const target = paceTarget(account, config, now)
+  return target === null ? '?' : `${Math.round(target * 100)}%`
 }
 
 async function login(): Promise<void> {
@@ -314,6 +355,30 @@ function setWeeklyThreshold(needle: string, raw: string): void {
   status()
 }
 
+/**
+ * Turn weekly pacing on or off for one account, or clear its override.
+ *
+ * `default`/`none` removes the override so the account follows the global
+ * `weeklyPacing` again; `on`/`off` pin it regardless of the global setting.
+ */
+function setPacing(needle: string, raw: string): void {
+  const store = loadStore()
+  const account = findAccount(store, needle)
+  if (!account) fail(`unknown account: ${needle}`)
+
+  if (raw === 'default' || raw === 'none') {
+    account.pacing = null
+  } else {
+    const value = parsePacing(raw)
+    if (value === null) fail(`pacing must be on, off or default (got ${raw})`)
+    account.pacing = value
+  }
+
+  saveStore(store)
+  writeStatus(store, config)
+  status()
+}
+
 /** Undo every park so the rotation starts clean from account #1. */
 function unpark(): void {
   const store = loadStore()
@@ -362,6 +427,11 @@ export async function main(
         fail('usage: oc-anthropic weekly-threshold <account> <percent|default>')
       setWeeklyThreshold(args[0] as string, args[1] as string)
       break
+    case 'pacing':
+      if (args.length < 2)
+        fail('usage: oc-anthropic pacing <account> <on|off|default>')
+      setPacing(args[0] as string, args[1] as string)
+      break
     case 'use':
       if (!args[0]) fail('usage: oc-anthropic use <account>')
       use(args[0])
@@ -389,6 +459,7 @@ export async function main(
           '  threshold <acct> <pct>  switch point for one account, or `default`',
           '  weekly-threshold <acct> <pct>',
           '                          weekly limit for one account, or `default`',
+          '  pacing <acct> <on|off>  weekly pacing for one account, or `default`',
           '  label <acct> <name>     rename an account',
           '',
           '  use <acct>              force-switch to an account now',

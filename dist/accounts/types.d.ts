@@ -49,6 +49,11 @@ export type Account = {
      * `weeklyThreshold`, mirroring how `threshold` overrides `switchThreshold`.
      */
     weeklyThreshold: number | null;
+    /**
+     * Per-account weekly pacing override. `null` (or absent, for stores written
+     * before this field existed) falls back to the global `weeklyPacing`.
+     */
+    pacing?: boolean | null;
     /** Epoch ms; account is skipped until then. Set on 429 / manual park. */
     parkedUntil: number;
     /** Epoch ms of last successful request. */

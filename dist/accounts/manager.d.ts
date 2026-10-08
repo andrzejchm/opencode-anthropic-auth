@@ -5,6 +5,8 @@ export type Logger = (level: 'info' | 'warn' | 'error', message: string) => void
 export declare function resolveConfig(options?: Record<string, unknown>): Config;
 /** `0.8` and `80` both mean 80%. Returns null for anything unusable. */
 export declare function normalizeThreshold(value: unknown): number | null;
+/** `on`/`off` (also true/false, 1/0) for a CLI argument. Null for anything else. */
+export declare function parsePacing(value: string): boolean | null;
 export type Manager = {
     /** Number of accounts available, used to bound retries. */
     size: () => number;

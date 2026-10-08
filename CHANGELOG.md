@@ -1,5 +1,13 @@
 # @ex-machina/opencode-anthropic-auth
 
+## 2.4.0
+
+### Minor Changes
+
+- Add per-account weekly pacing overrides with `oc-anthropic pacing <account> on|off|default`.
+- Compact the status table with combined usage/limit columns, weekly pace allowances, and 5-hour/7-day reset countdowns. Move tier and organization to the end and size the account column to fit short labels.
+- Include per-account pacing, pace targets, and weekly reset timestamps in the status JSON.
+
 ## 1.8.5
 
 ### Patch Changes

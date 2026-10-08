@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { statSync, writeFileSync } from 'node:fs'
 import { addAccount } from '../accounts/login.ts'
-import { normalizeThreshold, resolveConfig } from '../accounts/manager.ts'
+import {
+  normalizeThreshold,
+  parsePacing,
+  resolveConfig,
+} from '../accounts/manager.ts'
 import { buildStatus } from '../accounts/status.ts'
 import {
   findAccount,
@@ -323,7 +327,45 @@ describe('normalizeThreshold', () => {
   })
 })
 
+describe('parsePacing', () => {
+  test('reads on and off', () => {
+    expect(parsePacing('on')).toBe(true)
+    expect(parsePacing('OFF')).toBe(false)
+    expect(parsePacing('true')).toBe(true)
+    expect(parsePacing('0')).toBe(false)
+  })
+
+  test('rejects anything else rather than guessing', () => {
+    expect(parsePacing('maybe')).toBeNull()
+    expect(parsePacing('')).toBeNull()
+  })
+})
+
 describe('buildStatus', () => {
+  test('reports pacing and the pace target per account', () => {
+    const now = Date.now()
+    const store = seedStore(
+      testAccount({
+        id: 'a',
+        label: 'a',
+        pacing: true,
+        usage: {
+          ...usage(0.1),
+          u7d: 0.4,
+          reset7d: Math.floor((now + 3.5 * 86_400_000) / 1000),
+        },
+      }),
+      testAccount({ id: 'b', label: 'b', usage: usage(0.1) }),
+    )
+
+    const status = buildStatus(store, DEFAULT_CONFIG, now)
+
+    expect(status.accounts[0]).toMatchObject({ pacing: true, u7d: 0.4 })
+    // Day 4 of 7 against the 98% default ceiling.
+    expect(status.accounts[0]?.paceTarget).toBeCloseTo(0.98 * (4 / 7), 3)
+    expect(status.accounts[1]?.pacing).toBe(false)
+  })
+
   test('reports order, state and the effective threshold without secrets', () => {
     const store = seedStore(
       testAccount({ id: 'a', label: 'a', usage: usage(0.9) }),

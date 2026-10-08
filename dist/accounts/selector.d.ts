@@ -55,6 +55,23 @@ export declare function weeklyThresholdFor(account: Account, config: Config): nu
 export declare function pacedWeeklyCeiling(account: Account, config: Config, now: number): number;
 /** Weekly limit exhausted — the account cannot serve anything until it resets. */
 export declare function isBlocked(account: Account, config: Config, now: number): boolean;
+/**
+ * Is weekly pacing enforced for this account?
+ *
+ * A value stored on the account (set via `oc-anthropic pacing`) beats the
+ * global `weeklyPacing`. That lets one account be paced while another burns
+ * through its week freely, e.g. a spare you only want to drain.
+ */
+export declare function pacingFor(account: Account, config: Config): boolean;
+/**
+ * The 7d utilization this account should have reached by now, or `null` when
+ * that cannot be known.
+ *
+ * Unlike `pacedWeeklyCeiling` this refuses to guess: with no snapshot, or one
+ * whose 7d window has already rolled over, there is no window to measure
+ * against, and echoing the full ceiling would read as "you may use it all".
+ */
+export declare function paceTarget(account: Account, config: Config, now: number): number | null;
 /** Under its threshold, not parked, not weekly-blocked, on pace. */
 export declare function isEligible(account: Account, config: Config, now: number): boolean;
 /** Apply the configured rotation order; unlisted accounts keep store order. */

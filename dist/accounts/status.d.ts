@@ -18,6 +18,12 @@ export type StatusRow = {
     u5h: number;
     resets5h: string | null;
     u7d: number;
+    /** When the 7d window rolls over, or null if unknown. */
+    resets7d: string | null;
+    /** 7d utilization the account should have reached by now (0..1), or null if unknown. */
+    paceTarget: number | null;
+    /** Whether weekly pacing is enforced for this account (own setting, else global). */
+    pacing: boolean;
     lastUsed: string | null;
     error: string | null;
 };
