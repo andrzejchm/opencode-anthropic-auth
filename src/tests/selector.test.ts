@@ -21,6 +21,7 @@ const config: Config = {
   accountWeeklyThresholds: {},
   weeklyPacing: false,
   accountOrder: [],
+  pinnedFallback: false,
 }
 
 function account(

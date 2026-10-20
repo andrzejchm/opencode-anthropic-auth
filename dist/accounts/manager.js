@@ -1,5 +1,5 @@
 import { needsRefresh, refreshAccount } from "./refresh.js";
-import { isUsageStale, select } from "./selector.js";
+import { findPinned, isUsageStale, pinnedBlock, select } from "./selector.js";
 import { writeStatus } from "./status.js";
 import { loadStore, migrateFromOpencodeAuth, updateStore } from "./store.js";
 import { DEFAULT_CONFIG } from "./types.js";
@@ -45,6 +45,9 @@ export function resolveConfig(options) {
         accountOrder: Array.isArray(options?.accountOrder)
             ? options.accountOrder.filter((e) => typeof e === 'string')
             : DEFAULT_CONFIG.accountOrder,
+        pinnedFallback: typeof options?.pinnedFallback === 'boolean'
+            ? options.pinnedFallback
+            : DEFAULT_CONFIG.pinnedFallback,
     };
 }
 /**
@@ -84,6 +87,48 @@ export function parsePacing(value) {
         return false;
     return null;
 }
+/** A session's pinned account can't serve this request. */
+export class PinnedAccountError extends Error {
+    pin;
+    reason;
+    until;
+    label;
+    /** First sentence of the message: which account, what's wrong, until when. */
+    summary;
+    constructor(pin, reason, 
+    /** Epoch ms when the account should be usable again, if known. */
+    until, 
+    /** Label of the matched account, when there is one. */
+    label) {
+        const summary = pinnedSummary(pin, reason, until, label);
+        super(`${summary} This session is pinned to it (session metadata ` +
+            '`anthropicAccount`), so no other account was used. Set the plugin ' +
+            'option `pinnedFallback: true` to fall back to normal account ' +
+            'selection instead.');
+        this.pin = pin;
+        this.reason = reason;
+        this.until = until;
+        this.label = label;
+        this.name = 'PinnedAccountError';
+        this.summary = summary;
+    }
+}
+function pinnedSummary(pin, reason, until, label) {
+    const name = label && label !== pin
+        ? `Claude account "${label}" (pinned as "${pin}")`
+        : `Claude account "${pin}"`;
+    const when = until ? ` until ${new Date(until).toISOString()}` : '';
+    switch (reason) {
+        case 'not-found':
+            return `${name} was not found in the accounts file.`;
+        case 'parked':
+            return `${name} has hit its usage limit and is parked${when}.`;
+        case 'weekly-limit':
+            return `${name} has reached its weekly limit${when || ' (reset time unknown)'}.`;
+        case 'refresh-failed':
+            return `${name} could not refresh its token and is parked${when}; re-authorize it.`;
+    }
+}
 /** Don't re-probe the same account more often than this. */
 const PROBE_COOLDOWN_MS = 60_000;
 export function createManager(config, log) {
@@ -99,9 +144,10 @@ export function createManager(config, log) {
      * each, so the steady-state cost is nothing — response headers keep active
      * accounts current for free.
      */
-    async function refreshStaleUsage() {
+    async function refreshStaleUsage(onlyId) {
         const now = Date.now();
-        const stale = loadStore().accounts.filter((account) => isUsageStale(account, now) &&
+        const stale = loadStore().accounts.filter((account) => (onlyId === undefined || account.id === onlyId) &&
+            isUsageStale(account, now) &&
             now - (lastProbe.get(account.id) ?? 0) > PROBE_COOLDOWN_MS &&
             !needsRefresh(account));
         if (stale.length === 0)
@@ -122,6 +168,41 @@ export function createManager(config, log) {
         const store = updateStore((s) => mutate(s.accounts));
         writeStatus(store, config);
     };
+    /** Refresh the token if due. On failure, park the account and return false. */
+    async function ensureFresh(account) {
+        if (!needsRefresh(account))
+            return true;
+        try {
+            await refreshAccount(account);
+            return true;
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            // A revoked refresh token is permanent until the user logs in again,
+            // so park the account rather than letting one dead credential fail
+            // every request while other accounts sit idle.
+            const revoked = message.includes('invalid_grant');
+            log('error', revoked
+                ? `${account.label} needs re-authorization — run \`oc-anthropic login\` (${message})`
+                : `${account.label} token refresh failed: ${message}`);
+            sync((accounts) => {
+                const target = accounts.find((a) => a.id === account.id);
+                if (!target)
+                    return;
+                target.error = message;
+                target.parkedUntil = Date.now() + (revoked ? 24 * 3600_000 : 60_000);
+            });
+            return false;
+        }
+    }
+    // Label lazily, once: migrated accounts are named the first time they
+    // serve a request. Guarded by profileAt so an account that genuinely has
+    // no org doesn't re-request its profile on every call.
+    function labelLazily(account) {
+        if (account.profileAt === null || account.profileAt === undefined) {
+            void labelAccount(account, config);
+        }
+    }
     return {
         size: () => loadStore().accounts.length,
         async acquire() {
@@ -138,39 +219,36 @@ export function createManager(config, log) {
                     : `using ${account.label} (${pct(account)})`);
                 lastActive = account.id;
             }
-            if (needsRefresh(account)) {
-                try {
-                    await refreshAccount(account);
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    // A revoked refresh token is permanent until the user logs in again,
-                    // so park the account rather than letting one dead credential fail
-                    // every request while other accounts sit idle.
-                    const revoked = message.includes('invalid_grant');
-                    log('error', revoked
-                        ? `${account.label} needs re-authorization — run \`oc-anthropic login\` (${message})`
-                        : `${account.label} token refresh failed: ${message}`);
-                    sync((accounts) => {
-                        const target = accounts.find((a) => a.id === account.id);
-                        if (!target)
-                            return;
-                        target.error = message;
-                        target.parkedUntil = Date.now() + (revoked ? 24 * 3600_000 : 60_000);
-                    });
-                    return null;
-                }
-            }
-            // Label lazily, once: migrated accounts are named the first time they
-            // serve a request. Guarded by profileAt so an account that genuinely has
-            // no org doesn't re-request its profile on every call.
-            if (account.profileAt === null || account.profileAt === undefined) {
-                void labelAccount(account, config);
-            }
+            if (!(await ensureFresh(account)))
+                return null;
+            labelLazily(account);
             const updated = updateStore((s) => {
                 s.active = account.id;
             });
             writeStatus(updated, config);
+            return account;
+        },
+        async acquirePinned(pin) {
+            const target = findPinned(loadStore(), pin);
+            if (!target)
+                throw new PinnedAccountError(pin, 'not-found', null);
+            await refreshStaleUsage(target.id);
+            const account = findPinned(loadStore(), pin);
+            if (!account)
+                throw new PinnedAccountError(pin, 'not-found', null);
+            const block = pinnedBlock(account, config, Date.now());
+            if (block) {
+                throw new PinnedAccountError(pin, block.reason, block.until, account.label);
+            }
+            if (!(await ensureFresh(account))) {
+                const parked = findPinned(loadStore(), pin);
+                throw new PinnedAccountError(pin, 'refresh-failed', parked?.parkedUntil || null, account.label);
+            }
+            labelLazily(account);
+            // Deliberately leaves the store's `active` pointer and `lastActive`
+            // alone: those describe unpinned rotation, and a pinned session using
+            // someone's account must not look like (or cause) a switch for everyone
+            // else.
             return account;
         },
         record(account, response) {

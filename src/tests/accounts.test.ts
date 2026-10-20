@@ -213,6 +213,60 @@ describe('addAccount', () => {
     expect(account.profileAt).toBeNull()
   })
 
+  test('re-login without a label still renames a plain account to its email', async () => {
+    stubProfile('uuid-1', 'you@work.example')
+    seedStore(testAccount({ id: 'uuid-1', label: 'renamed' }))
+
+    await addAccount(credentials)
+
+    const [account] = loadStore().accounts
+    expect(account?.label).toBe('you@work.example')
+    expect(account && 'email' in account).toBe(false)
+  })
+
+  test('uses a given label and remembers the email beside it', async () => {
+    clearStore()
+    stubProfile('uuid-1', 'you@work.example')
+
+    const account = await addAccount(credentials, undefined, { label: 'you' })
+
+    expect(account.label).toBe('you')
+    expect(account.email).toBe('you@work.example')
+  })
+
+  test('re-login without a label keeps a label given at connect time', async () => {
+    clearStore()
+    stubProfile('uuid-1', 'you@work.example')
+    await addAccount(credentials, undefined, { label: 'you' })
+
+    await addAccount({ refresh: 'r2', access: 'a2', expires: 2 })
+
+    const [account] = loadStore().accounts
+    expect(account?.label).toBe('you')
+    expect(account?.access).toBe('a2')
+  })
+
+  test('re-login with a label renames the existing account', async () => {
+    stubProfile('uuid-1', 'you@work.example')
+    seedStore(testAccount({ id: 'uuid-1', label: 'you@work.example' }))
+
+    await addAccount(credentials, undefined, { label: 'me' })
+
+    const store = loadStore()
+    expect(store.accounts).toHaveLength(1)
+    expect(store.accounts[0]?.label).toBe('me')
+  })
+
+  test('rejects a label already used by another account', async () => {
+    stubProfile('uuid-2', 'two@example.com')
+    seedStore(testAccount({ id: 'uuid-1', label: 'taken' }))
+
+    await expect(
+      addAccount(credentials, undefined, { label: 'taken' }),
+    ).rejects.toThrow('already labelled "taken"')
+    expect(loadStore().accounts).toHaveLength(1)
+  })
+
   test('keeps existing accounts when adding another', async () => {
     stubProfile('uuid-2', 'second@example.com')
     seedStore(testAccount({ id: 'uuid-1', label: 'first' }))
@@ -245,6 +299,12 @@ describe('resolveConfig', () => {
     // Percentages and fractions are both accepted.
     expect(config.accountThresholds).toEqual({ a: 0.8, b: 0.5 })
     expect(config.accountWeeklyThresholds).toEqual({ a: 0.7, b: 0.6 })
+  })
+
+  test('reads pinnedFallback, defaulting to off', () => {
+    expect(resolveConfig().pinnedFallback).toBe(false)
+    expect(resolveConfig({ pinnedFallback: true }).pinnedFallback).toBe(true)
+    expect(resolveConfig({ pinnedFallback: 'yes' }).pinnedFallback).toBe(false)
   })
 
   test('ignores an out-of-range threshold instead of disabling rotation', () => {

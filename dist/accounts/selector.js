@@ -183,6 +183,35 @@ export function select(store, config, now = Date.now()) {
     const soonest = [...candidates].sort((a, b) => waitUntil(a, now) - waitUntil(b, now))[0];
     return soonest ? { account: soonest, reason: 'last-resort' } : null;
 }
+/**
+ * The account a session pin names: an id, a label, or (for accounts given a
+ * label of their own) the profile email. Exact matches only, unlike the CLI's
+ * prefix lookup — a pin that silently resolved to the wrong person's account
+ * would be worse than one that fails.
+ */
+export function findPinned(store, pin) {
+    return (store.accounts.find((a) => a.id === pin) ??
+        store.accounts.find((a) => a.label === pin) ??
+        store.accounts.find((a) => a.email === pin));
+}
+/**
+ * Why a pinned account cannot serve right now, with when that ends (epoch ms,
+ * or null if unknown); `null` when it can serve.
+ *
+ * Only hard stops count: a park or the weekly ceiling. The 5h switch
+ * threshold and weekly pacing are hand-over hints between accounts, and a
+ * pinned session has nothing to hand over to.
+ */
+export function pinnedBlock(account, config, now) {
+    if (now < account.parkedUntil) {
+        return { reason: 'parked', until: account.parkedUntil };
+    }
+    if (isBlocked(account, config, now)) {
+        const reset7d = account.usage?.reset7d;
+        return { reason: 'weekly-limit', until: reset7d ? reset7d * 1000 : null };
+    }
+    return null;
+}
 function waitUntil(account, now) {
     const reset = account.usage?.reset5h ? account.usage.reset5h * 1000 : now;
     return Math.max(account.parkedUntil, reset);

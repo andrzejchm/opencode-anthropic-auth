@@ -163,6 +163,7 @@ Everything is optional. The CLI writes to the store and always wins over config,
 | `accountThresholds` | `{}` | per-account 5h overrides, keyed by label or id |
 | `accountWeeklyThresholds` | `{}` | per-account weekly overrides, keyed by label or id |
 | `weeklyPacing` | `false` | spread each account's weekly budget across its 7-day window instead of allowing it all up front |
+| `pinnedFallback` | `false` | OpenCode v2 only: when a [pinned session](#pinning-a-session-to-an-account-server-use)'s account is missing or limited, use normal selection instead of failing |
 
 Thresholds accept `80` or `0.8` — both mean 80%. Per-account weekly overrides work the same way as the per-account 5h ones: `oc-anthropic weekly-threshold <acct> 80` sets one, `oc-anthropic weekly-threshold <acct> default` clears it back to the global `weeklyThreshold` (or the `accountWeeklyThresholds` entry, if one applies).
 
@@ -181,6 +182,40 @@ The `PACE` column shows the usage an account should have reached by now (`7D` is
 The CLI only sees the global `weeklyPacing` from the environment, not from `opencode.json`. So the footer's `pacing on/off` can disagree with what the plugin actually does, and an account with no override may show the wrong `PACING` value. A per-account `oc-anthropic pacing` setting is stored with the account, so both always agree.
 
 Environment overrides: `ANTHROPIC_SWITCH_THRESHOLD`, `ANTHROPIC_WEEKLY_THRESHOLD`, `ANTHROPIC_WEEKLY_PACING`. Upstream's `ANTHROPIC_BASE_URL`, `ANTHROPIC_INSECURE` and `ANTHROPIC_CLAUDE_CODE_VERSION` still work.
+
+### Pinning a session to an account (server use)
+
+OpenCode v2 only, and entirely opt-in: nothing changes unless a session carries the key below.
+
+When OpenCode runs as a shared server and a client app creates sessions for different people, each with their own Claude account in the same accounts file, you can pin a session to one account. Set `anthropicAccount` in the session's metadata when you create it. The value is the account's label, its email, or its id, the same names `accountOrder` takes:
+
+```http
+POST /api/session
+Content-Type: application/json
+
+{
+  "title": "Alice's task",
+  "metadata": { "anthropicAccount": "alice@example.com" }
+}
+```
+
+- Every request in that session uses only that account. Token refresh, usage tracking and parking on a rate limit work as usual.
+- Subagent (child) sessions don't get their parent's metadata, so a session without the key uses the pin of its nearest ancestor that has one.
+- If the account is parked, over its weekly limit, can't refresh its token, or doesn't exist, the request fails with an error that names the account and says when it resets. It does not quietly use someone else's account. Set `"pinnedFallback": true` to fall back to normal selection instead.
+- The 5h `switchThreshold` and weekly pacing don't apply to a pinned account, because those only decide when to hand over to another account. The `weeklyThreshold` still applies.
+- Pinned requests don't move the global active account, so rotation for unpinned sessions works the same as before.
+- The pin is read once per session and cached (up to 1000 sessions), so set it when you create the session. Changing it later may not take effect until OpenCode restarts. If the session can't be read, the request uses normal selection and the plugin logs a warning.
+
+To give an account a label of your own when you add it through OpenCode's connect API, pass `accountLabel` in the `answer`. The TUI, web app and CLI never ask for it. Leave it out and the account is labelled with its email, the same as today:
+
+```http
+POST /api/integration/anthropic/connect/oauth
+Content-Type: application/json
+
+{ "methodID": "claude-max", "label": "Alice", "answer": { "accountLabel": "alice" } }
+```
+
+The top-level `label` names OpenCode's own connection, and plugins never see it. `answer.accountLabel` is the label this plugin stores. An account added this way keeps its label when someone logs in to it again without one, and its email still works as a pin. If another account already has that label, the connect fails.
 
 ---
 

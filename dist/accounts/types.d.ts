@@ -24,6 +24,11 @@ export type Account = {
     id: string;
     /** Auto-derived from the profile, overridable. */
     label: string;
+    /**
+     * Profile email, stored only when the account was given a label of its own
+     * at connect time (so the label is no longer the email). Absent otherwise.
+     */
+    email?: string;
     org: string | null;
     tier: string | null;
     refresh: string;
@@ -90,5 +95,11 @@ export type Config = {
     weeklyPacing: boolean;
     /** Account labels or ids, in rotation order. Unlisted accounts keep their store order. */
     accountOrder: string[];
+    /**
+     * When a session is pinned to an account (OpenCode v2 session metadata
+     * `anthropicAccount`) and that account is missing, parked or over its weekly
+     * limit, fall back to normal selection instead of failing the request.
+     */
+    pinnedFallback: boolean;
 };
 export declare const DEFAULT_CONFIG: Config;

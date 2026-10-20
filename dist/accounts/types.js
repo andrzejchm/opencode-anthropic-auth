@@ -5,4 +5,5 @@ export const DEFAULT_CONFIG = {
     accountWeeklyThresholds: {},
     weeklyPacing: false,
     accountOrder: [],
+    pinnedFallback: false,
 };
