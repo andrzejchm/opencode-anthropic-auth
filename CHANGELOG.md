@@ -1,5 +1,11 @@
 # @ex-machina/opencode-anthropic-auth
 
+## 2.5.0
+
+### Minor Changes
+
+- [#1](https://github.com/andrzejchm/opencode-anthropic-auth/pull/1) 
+
 ## 2.4.0
 
 ### Minor Changes
