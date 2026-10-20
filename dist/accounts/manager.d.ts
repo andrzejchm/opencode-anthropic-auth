@@ -12,12 +12,34 @@ export type Manager = {
     size: () => number;
     /** Pick an account and guarantee it has a usable access token. */
     acquire: () => Promise<Account | null>;
+    /**
+     * Use only the account a session is pinned to (by id, label or email).
+     * Throws `PinnedAccountError` rather than picking another account.
+     */
+    acquirePinned: (pin: string) => Promise<Account>;
     /** Fold a response's rate-limit headers back into the store. */
     record: (account: Account, response: Response) => void;
     /** Mark an account exhausted so the next attempt moves on. */
     park: (account: Account, response: Response, body: string) => void;
     isLimit: typeof isLimitResponse;
 };
+export type PinnedAccountReason = 'not-found' | 'parked' | 'weekly-limit' | 'refresh-failed';
+/** A session's pinned account can't serve this request. */
+export declare class PinnedAccountError extends Error {
+    readonly pin: string;
+    readonly reason: PinnedAccountReason;
+    /** Epoch ms when the account should be usable again, if known. */
+    readonly until: number | null;
+    /** Label of the matched account, when there is one. */
+    readonly label?: string | undefined;
+    /** First sentence of the message: which account, what's wrong, until when. */
+    readonly summary: string;
+    constructor(pin: string, reason: PinnedAccountReason, 
+    /** Epoch ms when the account should be usable again, if known. */
+    until: number | null, 
+    /** Label of the matched account, when there is one. */
+    label?: string | undefined);
+}
 export declare function createManager(config: Config, log: Logger): Manager;
 /**
  * Name an account from its own profile, so labels can't be mixed up.

@@ -1,5 +1,5 @@
-import { addAccount } from "./accounts/login.js";
-import { createManager, resolveConfig } from "./accounts/manager.js";
+import { addAccount, LabelConflictError } from "./accounts/login.js";
+import { createManager, PinnedAccountError, resolveConfig, } from "./accounts/manager.js";
 import { authorize, exchange } from "./auth.js";
 import { BodyLimitError, contentLength, readBoundedText } from "./bounded.js";
 import { compareClaudeCodeVersions, resolveClaudeCodeVersion, } from "./config.js";
@@ -10,6 +10,14 @@ const PLUGIN_ID = 'anthropic-auth';
 const INTEGRATION_ID = 'anthropic';
 const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 const MAX_RESPONSE_ERROR_BODY_BYTES = 256 * 1024;
+/** Session metadata key that pins a session to one account. */
+export const PIN_METADATA_KEY = 'anthropicAccount';
+/** Hidden OAuth form field an API client can use to label a new account. */
+export const ACCOUNT_LABEL_FIELD = 'accountLabel';
+/** Sessions whose pin (or lack of one) is remembered. */
+const PIN_CACHE_SIZE = 1000;
+/** Guards the parent walk against a cycle or a pathological chain. */
+const MAX_PARENT_DEPTH = 32;
 // `methodID` is a branded `Integration.MethodID` at the type level (a
 // compile-time-only tag, no runtime representation), so a plain string
 // literal needs a cast to satisfy the branded field.
@@ -29,6 +37,60 @@ function toCredential(tokens) {
         refresh: tokens.refresh,
         access: tokens.access,
         expires: tokens.expires,
+    };
+}
+/**
+ * Resolve the account a session is pinned to, or `null` when it isn't.
+ *
+ * The pin is the session's `metadata.anthropicAccount`. Subagent sessions are
+ * created without the parent's metadata, so a session without the key
+ * inherits from the nearest ancestor that has it. Results (including "not
+ * pinned") are cached per session, least-recently-used first out, so steady
+ * state costs no lookups. A failed lookup is not cached.
+ */
+export function createPinResolver(lookup, limit = PIN_CACHE_SIZE) {
+    const cache = new Map();
+    const remember = (id, value) => {
+        cache.delete(id);
+        cache.set(id, value);
+        while (cache.size > limit) {
+            const oldest = cache.keys().next().value;
+            if (oldest === undefined)
+                break;
+            cache.delete(oldest);
+        }
+    };
+    async function walk(sessionID) {
+        const seen = new Set();
+        let id = sessionID;
+        for (let depth = 0; id && depth < MAX_PARENT_DEPTH; depth++) {
+            if (seen.has(id))
+                break;
+            seen.add(id);
+            const cached = id === sessionID ? undefined : cache.get(id);
+            if (cached)
+                return cached;
+            const session = await lookup(id);
+            const pin = session?.metadata?.[PIN_METADATA_KEY];
+            if (typeof pin === 'string' && pin.trim())
+                return pin.trim();
+            id = session?.parentID;
+        }
+        return null;
+    }
+    return (sessionID) => {
+        const cached = cache.get(sessionID);
+        if (cached) {
+            remember(sessionID, cached);
+            return cached;
+        }
+        const pending = walk(sessionID);
+        remember(sessionID, pending);
+        pending.catch(() => {
+            if (cache.get(sessionID) === pending)
+                cache.delete(sessionID);
+        });
+        return pending;
     };
 }
 /**
@@ -66,6 +128,38 @@ export async function setup(ctx) {
     // the single synchronous `fetch` v1 gets, so the account has to be threaded
     // through by reference.
     const accountByRequest = new WeakMap();
+    const resolvePin = createPinResolver(async (sessionID) => typeof ctx.session.get === 'function'
+        ? await ctx.session.get({
+            sessionID,
+        })
+        : undefined);
+    /**
+     * Today's selection for an unpinned session; only the pinned account for a
+     * pinned one (or normal selection after it, with `pinnedFallback`).
+     */
+    async function acquireFor(sessionID) {
+        let pin;
+        try {
+            pin = await resolvePin(sessionID);
+        }
+        catch (error) {
+            console.warn(`[${PLUGIN_ID}] could not read session ${sessionID} to check for an ` +
+                `account pin; using normal account selection: ${error instanceof Error ? error.message : String(error)}`);
+            pin = null;
+        }
+        if (pin === null)
+            return manager.acquire();
+        try {
+            return await manager.acquirePinned(pin);
+        }
+        catch (error) {
+            if (!(error instanceof PinnedAccountError) || !config.pinnedFallback) {
+                throw error;
+            }
+            console.warn(`[${PLUGIN_ID}] ${error.summary} Falling back to normal account selection (pinnedFallback).`);
+            return manager.acquire();
+        }
+    }
     await ctx.integration.transform((draft) => {
         draft.method.update({
             integrationID: INTEGRATION_ID,
@@ -73,8 +167,24 @@ export async function setup(ctx) {
                 id: METHOD_ID,
                 type: 'oauth',
                 label: 'Claude Pro/Max',
+                // Hidden and optional: the TUI, web app and CLI skip it and connect
+                // exactly as before. API clients can pass
+                // `answer: { accountLabel: "..." }` to name the new account.
+                form: [
+                    {
+                        type: 'string',
+                        key: ACCOUNT_LABEL_FIELD,
+                        title: 'Account label',
+                        description: 'Label for this Claude account in the multi-account store. Defaults to the account email.',
+                        hidden: true,
+                    },
+                ],
             },
-            authorize: async () => {
+            authorize: async (answer) => {
+                const requested = answer?.[ACCOUNT_LABEL_FIELD];
+                const label = typeof requested === 'string' && requested.trim()
+                    ? requested.trim()
+                    : undefined;
                 const result = await authorize('max');
                 return {
                     url: result.url,
@@ -90,7 +200,12 @@ export async function setup(ctx) {
                         // adapter. OpenCode v2 still keeps its own single credential per
                         // connection; ours is the source of truth for which account
                         // actually serves a given request.
-                        await addAccount(credentials, config).catch(() => undefined);
+                        await addAccount(credentials, config, label ? { label } : undefined).catch((error) => {
+                            // A clashing label is the caller's mistake and must surface;
+                            // anything else stays best-effort, as before.
+                            if (error instanceof LabelConflictError)
+                                throw error;
+                        });
                         return toCredential(credentials);
                     },
                 };
@@ -109,7 +224,7 @@ export async function setup(ctx) {
     await ctx.session.hook('http.request', async (event) => {
         if (!active)
             return;
-        const account = await manager.acquire();
+        const account = await acquireFor(event.sessionID);
         // No usable account (none configured, or all parked/revoked): leave
         // the request untouched. It will go out with whatever credential
         // OpenCode's own connection resolution attached, most likely failing

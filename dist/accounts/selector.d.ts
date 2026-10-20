@@ -92,4 +92,23 @@ export type Selection = {
  * "stay on the last one until it runs out" case.
  */
 export declare function select(store: Store, config: Config, now?: number): Selection | null;
+/**
+ * The account a session pin names: an id, a label, or (for accounts given a
+ * label of their own) the profile email. Exact matches only, unlike the CLI's
+ * prefix lookup — a pin that silently resolved to the wrong person's account
+ * would be worse than one that fails.
+ */
+export declare function findPinned(store: Store, pin: string): Account | undefined;
+/**
+ * Why a pinned account cannot serve right now, with when that ends (epoch ms,
+ * or null if unknown); `null` when it can serve.
+ *
+ * Only hard stops count: a park or the weekly ceiling. The 5h switch
+ * threshold and weekly pacing are hand-over hints between accounts, and a
+ * pinned session has nothing to hand over to.
+ */
+export declare function pinnedBlock(account: Account, config: Config, now: number): {
+    reason: 'parked' | 'weekly-limit';
+    until: number | null;
+} | null;
 export declare function stateOf(account: Account, store: Store, config: Config, now?: number): AccountState;
