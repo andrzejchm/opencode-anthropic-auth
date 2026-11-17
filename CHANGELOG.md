@@ -14,6 +14,12 @@
 - Compact the status table with combined usage/limit columns, weekly pace allowances, and 5-hour/7-day reset countdowns. Move tier and organization to the end and size the account column to fit short labels.
 - Include per-account pacing, pace targets, and weekly reset timestamps in the status JSON.
 
+## 1.8.6
+
+### Patch Changes
+
+- [#278](https://github.com/ex-machina-co/opencode-anthropic-auth/pull/278) [`98c9229`](https://github.com/ex-machina-co/opencode-anthropic-auth/commit/98c9229c1eabfdc59ced03fae98d7b7832cb5b1e) Thanks [@jpat94](https://github.com/jpat94)! - Bump reported Claude Code version to 2.1.284 for Claude Sonnet 5.5 support
+
 ## 1.8.5
 
 ### Patch Changes
