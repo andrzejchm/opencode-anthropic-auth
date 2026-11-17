@@ -1,10 +1,16 @@
 # @ex-machina/opencode-anthropic-auth
 
+## 2.5.1
+
+### Patch Changes
+
+- 16e31f0: Sync with upstream: bump the reported Claude Code version to 2.1.322 (Claude Fable 5.2 support) and raise the OpenCode v2 request body limit from 10 MiB to 128 MiB.
+
 ## 2.5.0
 
 ### Minor Changes
 
-- [#1](https://github.com/andrzejchm/opencode-anthropic-auth/pull/1) 
+- [#1](https://github.com/andrzejchm/opencode-anthropic-auth/pull/1)
 
 ## 2.4.0
 
