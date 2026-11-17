@@ -44,7 +44,7 @@ import { parseClaudeCodeVersionRejection } from './version-rejection.ts'
 
 const PLUGIN_ID = 'anthropic-auth'
 const INTEGRATION_ID = 'anthropic'
-const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
+const MAX_REQUEST_BODY_BYTES = 128 * 1024 * 1024
 const MAX_RESPONSE_ERROR_BODY_BYTES = 256 * 1024
 
 /** Session metadata key that pins a session to one account. */
